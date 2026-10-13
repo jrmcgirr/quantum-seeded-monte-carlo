@@ -24,7 +24,10 @@ LAMBDA_MARGIN_MS = 500
 
 
 def _take_slot(table, now: float) -> bool:
-    kwargs = ddb.limiter_take(ddb.limiter_window(now), aws.env_int("QRYPT_MAX_PER_WINDOW"), now)
+    w = aws.env_int("QRYPT_WINDOW_S")
+    kwargs = ddb.limiter_take(
+        ddb.limiter_window(now, w), aws.env_int("QRYPT_MAX_PER_WINDOW"), now, size_s=w
+    )
     try:
         table.update_item(**kwargs)
     except Exception as exc:
@@ -35,7 +38,8 @@ def _take_slot(table, now: float) -> bool:
 
 
 def _retry_after(now: float) -> int:
-    return max(1, math.ceil(ddb.limiter_window(now) + ddb.LIMITER_WINDOW_S - now))
+    w = aws.env_int("QRYPT_WINDOW_S")
+    return max(1, math.ceil(ddb.limiter_window(now, w) + w - now))
 
 
 def submit(event, context) -> tuple[int, dict]:
