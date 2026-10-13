@@ -21,7 +21,7 @@ import sys
 import time
 from collections import Counter
 
-from _common import REFERENCE, call, log_events, log_group, wait
+from _common import REFERENCE, api_url, call, log_events, log_group, wait
 
 SMALL = {**REFERENCE, "paths": 1000, "shards": 1}
 REPORT = re.compile(
@@ -44,6 +44,7 @@ def reports(fn: str, since: float) -> dict[str, tuple[float, float | None]]:
 
 
 def submits(n: int, pace_s: float = 2.5) -> None:
+    api_url()  # resolve the URL (make outputs) before timing, or warm-up 1 eats the pacing
     t_start = time.time()
     rows = []
     for k in range(3 + n):
