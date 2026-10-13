@@ -7,8 +7,3 @@ variable "topic_arn" {
   description = "Alerts topic ARN (must already allow budgets.amazonaws.com to publish)."
   type        = string
 }
-
-variable "alert_email" {
-  description = "Email for Budget notifications."
-  type        = string
-}
