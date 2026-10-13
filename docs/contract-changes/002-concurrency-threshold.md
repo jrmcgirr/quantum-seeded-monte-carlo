@@ -1,7 +1,7 @@
 # 002 Reserved-concurrency threshold
 
 - **Requested by:** WS0, 2026-10-13 CT
-- **Status:** proposed
+- **Status:** accepted 2026-10-13 by James; done (HANDOFF 1.7)
 - **Affects:** WS0, WS1, WS5; `docs/HANDOFF.md` (§2 steps 0.2 and 0.7, D12, §3, R6), `docs/ROADMAP.md` QMC-090, `scripts/gitlab_issues.csv` QMC-090, `$HOME/.qmc/dev.tfvars`, `infra/` (`terraform.tfvars.example` text), `README.md`
 
 ## Need
