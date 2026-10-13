@@ -124,9 +124,3 @@ def test_errors():
     assert isinstance(EntropyError(ErrorCode.QRYPT_TIMEOUT), QmcError)
     assert {c.http_status for c in ErrorCode} == {400, 404, 405, 409, 429, 500, 502, 503}
     assert len(ErrorCode) == 22
-
-
-def test_cost_is_a_stub():
-    from qmc_core.cost import estimate
-
-    assert estimate({}, []) is None

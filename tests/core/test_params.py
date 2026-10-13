@@ -101,12 +101,34 @@ def test_variance_reduction():
         {**GOOD, "variance_reduction": "sobol"}
     )
     assert validate_job_request({**GOOD, "variance_reduction": "none"}, L, False)
-    assert errs({**GOOD, "variance_reduction": "antithetic"}).code is ErrorCode.UNSUPPORTED
+    spec = validate_job_request({**GOOD, "variance_reduction": "antithetic"}, L, False)
+    assert spec.variance_reduction == "antithetic"
 
 
-def test_validation_error_wins_over_unsupported():
-    err = errs({**GOOD, "variance_reduction": "antithetic", "S0": -1})
-    assert err.code is ErrorCode.VALIDATION_ERROR
+@pytest.mark.parametrize(
+    "paths,shards,field",
+    [(1_000_001, 10, "paths"), (2, 1, "paths"), (8, 5, "shards")],
+)
+def test_antithetic_rules(paths, shards, field):
+    got = fields({**GOOD, "variance_reduction": "antithetic", "paths": paths, "shards": shards})
+    assert field in {f for f, _ in got}
+
+
+def test_antithetic_boundaries():
+    validate_job_request(
+        {**GOOD, "variance_reduction": "antithetic", "paths": 4, "shards": 2}, L, False
+    )
+
+
+def test_on_entropy_failure():
+    assert validate_job_request(GOOD, L, False).on_entropy_failure == "reject"
+    assert (
+        validate_job_request({**GOOD, "on_entropy_failure": "queue"}, L, False).on_entropy_failure
+        == "queue"
+    )
+    assert ("on_entropy_failure", 'must be "reject" or "queue"') in fields(
+        {**GOOD, "on_entropy_failure": "later"}
+    )
 
 
 def test_fault_injection_disabled():

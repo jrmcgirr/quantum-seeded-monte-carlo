@@ -83,6 +83,108 @@ def new_job_item(
     return item
 
 
+def new_pending_job_item(
+    *,
+    job_id: str,
+    params: Mapping[str, str],
+    paths: int,
+    shards: int,
+    paths_per_shard: list[int],
+    chunk_size: int,
+    variance_reduction: str,
+    algo_version: str,
+    now_epoch: float,
+    max_age_s: int,
+    last_error: str,
+    ttl_days: int = TTL_DAYS,
+    fault_injection: Mapping | None = None,
+) -> dict:
+    """An unseeded ``PENDING_ENTROPY`` job item (contract change 008): no ``master_seed_hex``,
+    ``seed_provenance`` or ``deadline_at``; written with ``job_put``."""
+    item = {
+        **job_key(job_id),
+        "job_id": job_id,
+        "status": "PENDING_ENTROPY",
+        "created_at": iso_ms(now_epoch),
+        "params": dict(params),
+        "paths": paths,
+        "shards": shards,
+        "paths_per_shard": list(paths_per_shard),
+        "chunk_size": chunk_size,
+        "variance_reduction": variance_reduction,
+        "algo_version": algo_version,
+        "entropy_attempts": 1,
+        "last_entropy_error": last_error,
+        "pending_until": int(now_epoch) + max_age_s,
+        "ttl": _ttl(now_epoch, ttl_days),
+    }
+    if fault_injection:
+        item["fault_injection"] = dict(fault_injection)
+    return item
+
+
+def pending_attempt_failed(job_id: str, error_code: str) -> dict:
+    """``update_item``: ``ADD #attempts :one SET #err = :e``, condition ``#s = :pending``, ``ALL_NEW``."""
+    return {
+        "Key": job_key(job_id),
+        "UpdateExpression": "ADD #attempts :one SET #err = :e",
+        "ConditionExpression": "#s = :pending",
+        "ExpressionAttributeNames": {
+            "#attempts": "entropy_attempts",
+            "#err": "last_entropy_error",
+            "#s": "status",
+        },
+        "ExpressionAttributeValues": {":one": 1, ":e": error_code, ":pending": "PENDING_ENTROPY"},
+        "ReturnValues": "ALL_NEW",
+    }
+
+
+def pending_to_queued(
+    job_id: str,
+    master_seed_hex: str,
+    seed_provenance: Mapping,
+    now_epoch: float,
+    deadline_s: int,
+) -> dict:
+    """``update_item``: ``SET #s = :queued, #seed, #prov, #deadline = now + deadline_s`` (the
+    deadline starts at seeding), condition ``#s = :pending``, ``ALL_NEW``; ``ALL_OLD`` on failure."""
+    return {
+        "Key": job_key(job_id),
+        "UpdateExpression": "SET #s = :queued, #seed = :seed, #prov = :prov, #deadline = :deadline",
+        "ConditionExpression": "#s = :pending",
+        "ExpressionAttributeNames": {
+            "#s": "status",
+            "#seed": "master_seed_hex",
+            "#prov": "seed_provenance",
+            "#deadline": "deadline_at",
+        },
+        "ExpressionAttributeValues": {
+            ":queued": "QUEUED",
+            ":pending": "PENDING_ENTROPY",
+            ":seed": master_seed_hex,
+            ":prov": dict(seed_provenance),
+            ":deadline": int(now_epoch) + deadline_s,
+        },
+        "ReturnValues": "ALL_NEW",
+        "ReturnValuesOnConditionCheckFailure": "ALL_OLD",
+    }
+
+
+def pending_fail(job_id: str, reason: str) -> dict:
+    """``update_item``: ``SET #s = :failed, #why = :why``, condition ``#s = :pending``."""
+    return {
+        "Key": job_key(job_id),
+        "UpdateExpression": "SET #s = :failed, #why = :why",
+        "ConditionExpression": "#s = :pending",
+        "ExpressionAttributeNames": {"#s": "status", "#why": "fail_reason"},
+        "ExpressionAttributeValues": {
+            ":failed": "FAILED",
+            ":pending": "PENDING_ENTROPY",
+            ":why": reason,
+        },
+    }
+
+
 def limiter_take(window: int, cap: int, now_epoch: float, size_s: int = LIMITER_WINDOW_S) -> dict:
     """``update_item``: ``ADD #n :one SET #ttl = :ttl`` on ``RL#qrypt/<window>``, condition
     ``attribute_not_exists(#n) OR #n < :cap``."""

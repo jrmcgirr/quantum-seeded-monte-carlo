@@ -46,6 +46,19 @@ class ErrorCode(Enum):
         return self.value[1]
 
 
+# Contract change 008: failures that an opt-in (on_entropy_failure="queue") job may retry later.
+RETRYABLE_ENTROPY_CODES = frozenset(
+    {
+        ErrorCode.ENTROPY_RATE_LIMITED,
+        ErrorCode.QRYPT_RATE_LIMITED,
+        ErrorCode.QRYPT_SERVER_ERROR,
+        ErrorCode.QRYPT_ENTROPY_UNAVAILABLE,
+        ErrorCode.QRYPT_TIMEOUT,
+        ErrorCode.QRYPT_UNREACHABLE,
+    }
+)
+
+
 class QmcError(Exception):
     """An error with a §5.3 code. Handlers map it to the HTTP response with ``to_body()``."""
 

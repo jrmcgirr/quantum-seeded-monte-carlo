@@ -29,10 +29,10 @@ def simulate_shard(
 ) -> ShardResult:
     """Simulate one shard; ``params`` has float ``S0, K, r, sigma, T``.
 
-    ``"antithetic"`` raises NotImplementedError until QMC-108.
+    ``"antithetic"`` simulates ``shard_paths // 2`` pairs and returns ``n`` = pairs (§7.3).
     """
-    if variance_reduction != "none":
-        raise NotImplementedError(f"variance_reduction {variance_reduction!r} (QMC-108)")
+    if variance_reduction not in ("none", "antithetic"):
+        raise ValueError(f"unknown variance_reduction {variance_reduction!r}")
     S0, K, r, sigma, T = (float(params[k]) for k in ("S0", "K", "r", "sigma", "T"))
     drift = (r - 0.5 * sigma * sigma) * T
     vol = sigma * math.sqrt(T)
@@ -40,6 +40,20 @@ def simulate_shard(
     rng = shard_generator(master_int, shard_index)
     sums: list[float] = []
     sumsq: list[float] = []
+    if variance_reduction == "antithetic":
+        # §7.3: per chunk of m pairs, z and -z; the sample unit (n) is the pair.
+        remaining = pairs = shard_paths // 2
+        while remaining > 0:
+            m = min(chunk_size, remaining)
+            z = rng.standard_normal(m)
+            z_minus = -z
+            x_plus = disc * np.maximum(S0 * np.exp(drift + vol * z) - K, 0.0)
+            x_minus = disc * np.maximum(S0 * np.exp(drift + vol * z_minus) - K, 0.0)
+            x = 0.5 * (x_plus + x_minus)
+            sums.append(float(np.sum(x)))
+            sumsq.append(float(np.sum(x * x)))
+            remaining -= m
+        return ShardResult(n=pairs, sum=math.fsum(sums), sum_sq=math.fsum(sumsq))
     remaining = shard_paths
     while remaining > 0:
         m = min(chunk_size, remaining)

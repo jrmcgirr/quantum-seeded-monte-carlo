@@ -75,9 +75,54 @@ def test_within_3se_of_black_scholes():
     assert reference(P, res.estimate, res.std_error)["within_3se"]
 
 
-def test_antithetic_not_yet():
-    with pytest.raises(NotImplementedError):
-        simulate_shard(P, 10, M, 0, variance_reduction="antithetic")
+def test_antithetic_matches_spec_and_counts_pairs():
+    """§7.3 antithetic, recomputed literally: per chunk of m pairs, z and -z."""
+    pairs, chunk = 25_000, 10_000
+    rng = shard_generator(M, 3)
+    drift = (P["r"] - 0.5 * P["sigma"] * P["sigma"]) * P["T"]
+    vol = P["sigma"] * math.sqrt(P["T"])
+    disc = math.exp(-P["r"] * P["T"])
+    sums, sumsq = [], []
+    for m in (10_000, 10_000, 5_000):
+        z = rng.standard_normal(m)
+        xp = disc * np.maximum(P["S0"] * np.exp(drift + vol * z) - P["K"], 0.0)
+        xm = disc * np.maximum(P["S0"] * np.exp(drift + vol * -z) - P["K"], 0.0)
+        x = 0.5 * (xp + xm)
+        sums.append(float(np.sum(x)))
+        sumsq.append(float(np.sum(x * x)))
+    got = simulate_shard(P, 2 * pairs, M, 3, chunk_size=chunk, variance_reduction="antithetic")
+    assert got.n == pairs
+    assert to_hex(got.sum) == to_hex(math.fsum(sums)) and to_hex(got.sum_sq) == to_hex(
+        math.fsum(sumsq)
+    )
+    again = simulate_shard(P, 2 * pairs, M, 3, chunk_size=chunk, variance_reduction="antithetic")
+    assert to_hex(again.sum) == to_hex(got.sum)
+
+
+def test_antithetic_reduces_variance_and_stays_within_3se():
+    def run(vr, paths_per_shard):
+        rows = []
+        for i in range(4):
+            r = simulate_shard(P, paths_per_shard, M, i, variance_reduction=vr)
+            rows.append(
+                {
+                    "shard_index": i,
+                    "n": r.n,
+                    "sum_hex": to_hex(r.sum),
+                    "sum_sq_hex": to_hex(r.sum_sq),
+                }
+            )
+        return aggregate(rows)
+
+    plain, anti = run("none", 50_000), run("antithetic", 50_000)
+    assert anti.n == plain.n // 2
+    assert anti.std_error < plain.std_error
+    assert reference(P, anti.estimate, anti.std_error)["within_3se"]
+
+
+def test_unknown_variance_reduction():
+    with pytest.raises(ValueError):
+        simulate_shard(P, 10, M, 0, variance_reduction="sobol")
 
 
 def test_fingerprint_fields(monkeypatch):
