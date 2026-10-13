@@ -136,9 +136,9 @@ variable "max_paths_per_shard" {
 }
 
 variable "qrypt_max_per_window" {
-  description = "Qrypt calls allowed per fixed 10 s window (QRYPT_MAX_PER_WINDOW). 15 keeps any rolling 10 s at or under Qrypt's 30."
+  description = "Qrypt calls allowed per fixed 10 s window (QRYPT_MAX_PER_WINDOW). 10 = 1 call/s on average (the Qrypt trial key's rate); any rolling 10 s <= 20, under the assignment's 30 (contract change 004)."
   type        = number
-  default     = 15
+  default     = 10
 
   validation {
     condition     = var.qrypt_max_per_window >= 1 && var.qrypt_max_per_window <= 15
