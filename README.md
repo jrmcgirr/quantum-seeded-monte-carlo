@@ -168,7 +168,7 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 *TBD: $1 Budget, seven alarms, validation limits and concurrency caps, with the deployed values. Custom metrics: Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard; the metrics themselves come from EMF log lines, so no role needs the `cloudwatch:PutMetricData` wildcard.*
 
-**Qrypt rate limit, measured** (WS4 `make burst`, build `d0af0b1`, `docs/TEST_RESULTS.md`): 40 concurrent submits → 15 × 202 and 25 × 429 `ENTROPY_RATE_LIMITED`, each with `Retry-After`. At most 15 Qrypt calls landed in any rolling 10 s, against Qrypt's limit of 30.
+**Qrypt rate limit.** At most **10** Qrypt calls per aligned 10 s window: ≤ 1/s on average and ≤ 20 in any rolling 10 s, under Qrypt's limit of 30. The trial key is rated 1 call/s (D10, contract change 004). A burst of 40 concurrent submits is expected to give 10 × 202 and 30 × 429 `ENTROPY_RATE_LIMITED`, each with `Retry-After`. *TBD: WS4's re-run after the 004 apply.* The earlier run under the old cap of 15 (build `d0af0b1`, `docs/TEST_RESULTS.md`) gave 15 × 202 and 25 × 429, with at most 15 Qrypt calls in any rolling 10 s.
 
 ## Why the worker fails closed at init
 
