@@ -86,8 +86,8 @@ Nothing is billed per hour: no NAT, load balancer, EC2, RDS or API Gateway. Prov
 | Qrypt limiter (one call per 2 s, D10) | Protects the external quota |
 | $1 monthly Budget with an alert at the first cent | Backstop: any spend at all sends an email |
 
-**One known non-free call:** CloudWatch's free API requests do not cover `GetMetricData` or `GetMetricWidgetImage`, which are billed per metric requested. Rendering the dashboard images (`docs/images/render_dashboard.py`) made 16 `GetMetricWidgetImage` calls covering about 30 metrics, about $0.0006 at list price. The measurements in this note used `GetMetricStatistics`, which is covered. *TBD: the month-to-date bill from Cost Explorer.*
+**One known non-free call:** CloudWatch's free API requests do not cover `GetMetricData` or `GetMetricWidgetImage`, which are billed per metric requested. Rendering the dashboard images (`docs/images/render_dashboard.py`) made 16 `GetMetricWidgetImage` calls covering about 30 metrics, about $0.0006 at list price. The measurements in this note used `GetMetricStatistics`, which is covered. The Budget itself reported month-to-date actual spend of **$0.0** (`DescribeBudget` `CalculatedSpend.ActualSpend`, 2026-10-13 after 13:43Z). *TBD: re-check before submission.*
 
 ## Budget configuration
 
-*TBD: `docs/images/budget.png`, a console screenshot of the `qmc-monthly` Budget ($1.00 monthly cost budget; alerts on actual > 1%, actual > 100% and forecast > 100%, published to the `qmc-dev-alerts` SNS topic only, whose email subscription is confirmed; D43). To be taken after WS1's apply that removes the direct email subscriber..*
+*TBD: `docs/images/budget.png`, a console screenshot of the `qmc-monthly` Budget ($1.00 monthly cost budget; alerts on actual > 1%, actual > 100% and forecast > 100%, published to the `qmc-dev-alerts` SNS topic only, whose email subscription is confirmed; D43). Verified with `DescribeSubscribersForNotification`: one SNS subscriber per notification..*
