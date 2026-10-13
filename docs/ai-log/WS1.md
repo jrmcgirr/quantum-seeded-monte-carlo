@@ -101,3 +101,17 @@
   - WS0 added the key-deletion step to HANDOFF's G4 final sequence and R26.
 - **Lesson:** under the project SCP, `force_destroy` on an IAM user is unusable. Any provider "force" cleanup that touches denied APIs fails at destroy, not apply, so only a real teardown catches it.
 - **Human checks:** James approved the push and MR. The new SNS subscription (created by the apply from empty) needs his confirmation.
+
+## 2026-10-13, WS1 Infrastructure (stretch: QMC-127, QMC-128)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **QMC-127, Step Functions watcher (contract change 007), off by default:**
+  - `enable_step_functions` (default false). The state machine `qmc-<env>-watcher` is STANDARD with logging OFF and tracing off. Its definition is in `infra/modules/api/watcher.asl.json`, rendered with `templatefile()` so WS4 can validate exactly what is deployed (WS0's request).
+  - The execution role is trusted by `states.amazonaws.com` with `aws:SourceAccount` and `aws:SourceArn`, and has `dynamodb:GetItem` on the table only. The API role gets `states:StartExecution` on the machine ARN only; the API env gets `SFN_ARN` only when enabled; output `state_machine_arn` (null when off). ARNs are built as strings.
+  - Checkov: CKV_AWS_284 and CKV_AWS_285 suppressed with reasons. A CKV_AWS_364 suppression I added didn't match any check Checkov runs on the resource, so I removed it. Result: 140 passed, 0 failed, 22 skipped.
+  - Plans (`-lock=false`): off → 2 changed (sha bump only; no sfn resources, no policy or env change). On → 3 to add (role, policy, state machine), 3 to change (API policy + `states:StartExecution`, API env + `SFN_ARN`, worker sha bump).
+- **QMC-128, PENDING_ENTROPY Terraform part (contract change 008),** on branch `ws1-pending` for a separate MR:
+  - The API role gets `lambda:InvokeFunction` on its own ARN (string-built). `aws_lambda_function_event_invoke_config` on the API: 0 retries, 300 s maximum event age.
+  - API env: `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` "2000,4000,8000", `PENDING_MAX_AGE_S` 120, `MAX_PENDING_ENTROPY` 10.
+  - Checkov 137 passed, 0 failed. Plan: 1 to add, 3 to change (incl. sha bump).
+- **Human checks:** James decided the stretch scope (HANDOFF 1.17 D21). The watcher stays off by default, so $0 holds (I7).
