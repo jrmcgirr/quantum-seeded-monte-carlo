@@ -108,6 +108,32 @@ Fix: `qmc_core.cost.WORKER_OVERHEAD_MS = 22`, added per shard that recorded `inv
 - Submit, reported only: billed 0.232 GB-s (run 3, cold API) and 0.096 GB-s (run 4), against the flat 0.125.
 - The tool's detail text "finalize after the last put is not counted" predates the overhead constant, which now covers that work on average.
 
+## PENDING_ENTROPY burst drill (QMC-128, contract change 008), main 581563d, 2026-10-13 ~18:13Z
+
+`AWS_PROFILE=qmc uv run python tools/pending_drill.py`. The drill sends 10 concurrent submits with `"on_entropy_failure": "queue"` (MAX_PENDING_ENTROPY 10). Live env: `QRYPT_MIN_GAP_MS` 2000, `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` "2000,4000,8000" (the 8 s step is clipped to 6 s by the 10 s timeout). Expected: every job COMPLETE, Qrypt calls ≥ 2 s apart, no Qrypt 429, and a replay that is bit-identical. Moto suite (`tests/integration/test_pending_entropy.py`, 20 tests) passes on this commit.
+
+| check | result | detail |
+| --- | --- | --- |
+| every submit 202 | PASS | 1 QUEUED, 9 PENDING_ENTROPY |
+| all 10 jobs COMPLETE | **FAIL** | 5 COMPLETE, **5 FAILED `ENTROPY_RATE_LIMITED`** |
+| Qrypt calls ≥ 2 s apart | PASS | 5 calls; gaps 3.443, 4.121, 6.172, 6.14 s |
+| ≤ 5 in any rolling 10 s | PASS | max 3 |
+| no Qrypt 429 | PASS | 5 × 200 |
+| RL#qrypt/LAST = last call's slot | PASS | |
+| seeder log clean | **FAIL** | `entropy_seeded` 4, `seeding_failed` 5 (the 5 failed jobs, once each); no `duplicate_seeder`, `seeder_error` or `seeder_invoke_failed` |
+| replay of a queued job bit-identical | PASS | `bec89cf1…` → `4523c4cf2a144daca55d26bc8ff2e6de`, `bit_identical` true, fingerprints match. Run by hand: the drill's first pick had failed, and the tool now picks a completed queued job |
+
+Jobs: `744f0984` (QUEUED at submit), `bec89cf1`, `0ad99503`, `b55c66f3`, `08e56cfa` (COMPLETE, seeded on attempts 1, 2, 3, 4 in turn); `cb42c2bb`, `0df60377`, `ed93a581`, `753a4dfd`, `b135365b` (FAILED, `entropy_attempts` 5).
+
+**Finding (reported to WS0): the backoff is synchronized, so a queued burst seeds one job per wave.**
+- All 9 queued seeders start together and sleep the same 2 / 4 / 6 / 6 s. They then race for one 2 s gap slot, so each wave seeds exactly one job. The seeded jobs' attempt numbers (1, 2, 3, 4) and the call gaps (≈ backoff + Qrypt latency) both show this.
+- 4 attempts give 4 seeded jobs plus the 1 seeded at submit. The other 5 exhaust their attempts.
+- The fail-closed path held for every failed job (DynamoDB, I1):
+  - no `master_seed_hex`, no `seed_provenance`, no shard items;
+  - `fail_reason` = `last_entropy_error` = `ENTROPY_RATE_LIMITED`.
+- Qrypt spent: 5 KiB (5 calls), not 10. Refused slots never reach Qrypt.
+- The acceptance check is not loosened; WS0/James decide the fix.
+
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
 Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
@@ -644,4 +670,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | antithetic + cost drill (16:23 UTC) | 1 |
 | cost re-runs after 009 (16:36, 16:37 UTC) | 2 |
 | cost validation with WORKER_OVERHEAD_MS (~18:10 UTC) | 2 |
-| **Total** | **94** |
+| PENDING_ENTROPY burst drill (~18:13 UTC; 5 Qrypt calls) | 5 |
+| **Total** | **99** |
