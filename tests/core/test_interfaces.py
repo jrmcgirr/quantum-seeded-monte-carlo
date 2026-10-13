@@ -34,4 +34,3 @@ def test_api_modules_do_not_import_numpy():
         "assert 'numpy' not in sys.modules, 'numpy imported on the API path'\n"
     )
     subprocess.run([sys.executable, "-c", code], check=True, env={"PYTHONPATH": "src"})
-
