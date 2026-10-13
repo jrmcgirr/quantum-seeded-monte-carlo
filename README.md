@@ -186,7 +186,12 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 | ![Worker duration](docs/images/dashboard-05-worker-duration-ms.png) | ![Worker errors, throttles, shard failures](docs/images/dashboard-06-worker-errors-throttles-shard-failures.png) |
 | ![Shard queue](docs/images/dashboard-07-shard-queue-depth-and-oldest-age-s.png) | ![DLQ depth](docs/images/dashboard-08-dlq-depth.png) |
 
-The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill. Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
+The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill.
+
+**Forced failure → DLQ alarm → email** (assignment core 6): the alarm `qmc-dev-dlq-depth` went OK → ALARM at 11:48:08 UTC ("Threshold Crossed: 1 datapoint [1.0] was greater than the threshold (0.0)" on `AWS/SQS ApproximateNumberOfMessagesVisible` for `qmc-dev-shards-dlq`). The email arrived through the `qmc-dev-alerts` SNS topic; screenshot below, with the drill evidence in `docs/TEST_RESULTS.md`. The thread also holds two earlier ALARM emails from that morning (WS1's test of the alarm and an earlier forced failure).
+
+![DLQ alarm email](docs/images/dlq-alarm-email.png)
+ Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
 
 **Qrypt rate limit.** The assignment requires that concurrent submissions never exceed Qrypt's 30 requests per 10 s. Our limiter enforces a **2 s minimum gap** between Qrypt calls, so at most 5 in any rolling 10 s (D10, contract change 006). Overflow is rejected with 429 `ENTROPY_RATE_LIMITED` and a `Retry-After` giving the seconds until the gap ends. A Qrypt 429 is not retried. Any submit that Qrypt itself refuses fails closed: a 503 naming the cause, no job written.
 
