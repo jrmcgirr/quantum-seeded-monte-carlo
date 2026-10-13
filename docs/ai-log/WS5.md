@@ -54,4 +54,4 @@
   - James took the Budget and DLQ-email screenshots.
   - James made the rulings recorded as D10 (004–006), D21, D40, D42, D43 and D45/D46.
   - WS0 reviewed and merged every MR.
-  - *Not yet:* someone signed in has not confirmed the Mermaid diagrams render in GitLab's viewer.
+  - James confirmed the Mermaid diagrams render in GitLab's viewer (QMC-150 acceptance). WS5 checked the public GitHub copy of `docs/ARCHITECTURE.md` in a headless browser (Playwright): all three diagrams render as Mermaid viewer frames, including the replay sequence once scrolled into view.
