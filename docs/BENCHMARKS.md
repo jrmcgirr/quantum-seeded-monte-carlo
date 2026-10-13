@@ -9,7 +9,7 @@ Measured with `make bench` (`tools/bench.py`) on the deployed `dev` stack in us-
 | Submit API latency, warm | < 800 ms p95 | client p50 **251 ms**, p95 **301 ms** (n = 49); Lambda `Duration` p50 105 ms, p95 151 ms | PASS |
 | Job wall clock, 1,000,000 paths | < 60 s, 5 runs | server-side `completed_at − created_at`: **0.25, 0.46, 0.46, 0.18, 0.20 s**; client-observed ≤ 2.6 s | PASS |
 | Steady-state cost | $0 at 100 jobs/day of 1M paths | arithmetic in `docs/COST.md` (WS5), using the durations below | see COST.md |
-| Environment rebuild | `terraform apply` from empty < 10 min | from `make drift-check` (QMC-145, integrator) | **pending** |
+| Environment rebuild | `terraform apply` from empty < 10 min | **65 s** for 33 resources (`make drift-check` step 4, 2026-10-13 15:33:06Z, build c1ab7ed; includes `make build` and `terraform init`) | PASS |
 
 ## Environment
 
