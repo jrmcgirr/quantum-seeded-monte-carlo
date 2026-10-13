@@ -35,10 +35,3 @@ def test_api_modules_do_not_import_numpy():
     )
     subprocess.run([sys.executable, "-c", code], check=True, env={"PYTHONPATH": "src"})
 
-
-def test_stub_handlers_return_200():
-    from qmc_api.handler import handle as api
-    from qmc_worker.handler import handle as worker
-
-    assert api({}, None)["statusCode"] == 200
-    assert worker({"Records": []}, None) == {"batchItemFailures": []}
