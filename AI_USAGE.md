@@ -51,7 +51,6 @@ All times are US Central. Notes on the source logs:
 - WS3's second entry gives "late morning", but its drill timestamps are UTC (11:27Z is 06:27 CT); the row uses the commit time.
 - WS4's stretch entry is logged in UTC and is converted. WS4's G0 → G3 entry says "09:45–16:10 CT", but it was committed at 10:58 CT and its work commits run from 06:08 CT, so the row uses the commit times.
 - Entries without a time use the commit time of the log entry, marked "(commit)".
-- WS1's G3 entry is on the branch `ws1-infra` (99f9144), not yet merged to `main` when this file was written.
 
 | When (CT) | Workstream | Tool and model | Asked | Produced | Human check or change |
 | --- | --- | --- | --- | --- | --- |
