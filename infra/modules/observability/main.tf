@@ -105,3 +105,81 @@ resource "aws_cloudwatch_metric_alarm" "this" {
   alarm_actions       = [aws_sns_topic.alerts.arn]
   ok_actions          = [aws_sns_topic.alerts.arn]
 }
+
+# QMC-118: the visible evidence for the EMF custom metrics (1 of 3 free dashboards). Metric and alarm widgets only:
+# Logs Insights widgets bill a query on every view.
+data "aws_region" "current" {}
+
+locals {
+  ns     = var.metrics_namespace
+  region = data.aws_region.current.region
+  widget = { width = 8, height = 6 }
+  dashboard_widgets = [
+    { title = "Jobs (sum per 5 min)", metrics = [
+      [local.ns, "JobsSubmitted", { stat = "Sum" }],
+      [local.ns, "JobsCompleted", { stat = "Sum" }],
+      [local.ns, "JobsPartial", { stat = "Sum" }],
+    ] },
+    { title = "Paths simulated (sum per 5 min)", metrics = [
+      [local.ns, "PathsSimulated", { stat = "Sum" }],
+    ] },
+    { title = "Qrypt entropy and seeding failures", metrics = [
+      [local.ns, "EntropyKiB", { stat = "Sum" }],
+      [local.ns, "SeedingFailures", { stat = "Sum" }],
+    ] },
+    { title = "Qrypt latency (ms)", metrics = [
+      [local.ns, "QryptLatencyMs", { stat = "p50" }],
+      [local.ns, "QryptLatencyMs", { stat = "p95" }],
+    ] },
+    { title = "Worker duration (ms)", metrics = [
+      ["AWS/Lambda", "Duration", "FunctionName", var.worker_function, { stat = "p50" }],
+      ["AWS/Lambda", "Duration", "FunctionName", var.worker_function, { stat = "Maximum" }],
+    ] },
+    { title = "Worker errors, throttles, shard failures", metrics = [
+      ["AWS/Lambda", "Errors", "FunctionName", var.worker_function, { stat = "Sum" }],
+      ["AWS/Lambda", "Throttles", "FunctionName", var.worker_function, { stat = "Sum" }],
+      [local.ns, "ShardFailures", { stat = "Sum" }],
+    ] },
+    { title = "Shard queue: depth and oldest age (s)", metrics = [
+      ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", var.queue_name, { stat = "Maximum" }],
+      ["AWS/SQS", "ApproximateAgeOfOldestMessage", "QueueName", var.queue_name, { stat = "Maximum", yAxis = "right" }],
+    ] },
+    { title = "DLQ depth", metrics = [
+      ["AWS/SQS", "ApproximateNumberOfMessagesVisible", "QueueName", var.dlq_name, { stat = "Maximum" }],
+    ] },
+  ]
+}
+
+resource "aws_cloudwatch_dashboard" "main" {
+  dashboard_name = var.name
+  dashboard_body = jsonencode({
+    widgets = concat(
+      [for i, w in local.dashboard_widgets : {
+        type   = "metric"
+        x      = (i % 3) * local.widget.width
+        y      = floor(i / 3) * local.widget.height
+        width  = local.widget.width
+        height = local.widget.height
+        properties = {
+          title   = w.title
+          region  = local.region
+          view    = "timeSeries"
+          stacked = false
+          period  = 300
+          metrics = w.metrics
+        }
+      }],
+      [{
+        type   = "alarm"
+        x      = 16
+        y      = 12
+        width  = 8
+        height = 6
+        properties = {
+          title  = "Alarms"
+          alarms = sort([for a in aws_cloudwatch_metric_alarm.this : a.arn])
+        }
+      }],
+    )
+  })
+}
