@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
-| Burst vs 30 req/10 s | `make burst` | 1 s window cap 1 (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), **1 × 503: Qrypt 429 on a call ~1.2 s after the previous one** (finding below). Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
+| Burst vs 30 req/10 s | `make burst` | 1 s window cap 1 (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), **1 × 503: Qrypt 429 on a call ~1.2 s after the previous one**, max 2 Qrypt calls per 10 s (finding below). Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -225,7 +225,7 @@ qrypt_call per fixed window (log timestamps): {1791897219: 1}
 PASS  QryptLatencyMs SampleCount = qrypt_call lines (same minutes)  1 vs 1 (after 0 s)
 ```
 
-**The tool output above is wrong on one line.** `no Qrypt 429  {200: 1}` passed only because the tool stopped polling the logs once it had as many `qrypt_call` lines as accepted jobs (1), before the second call's line arrived. Fixed in `tools/burst.py` (543a5aa): it now waits for one line per submit that reached Qrypt, then 30 s more. The full log (`FilterLogEvents`, `/aws/lambda/qmc-dev-api`, from 13:13:30Z):
+**The tool output above is wrong on four lines:** `qrypt_call lines ≥ accepted jobs  1 calls`, `no Qrypt 429  {200: 1}`, `≤ 11 Qrypt calls in any rolling 10 s  max 1` and `SampleCount … 1 vs 1`. All four passed only because the tool stopped polling the logs once it had as many `qrypt_call` lines as accepted jobs (1), before the second call's line arrived. Fixed in `tools/burst.py` (543a5aa): it now waits for one line per submit that reached Qrypt, then 30 s more. The full log (`FilterLogEvents`, `/aws/lambda/qmc-dev-api`, from 13:13:30Z):
 
 ```
 13:13:39.792Z qrypt_call job a40fe41e… http_status 200 latency_ms 284 attempt 1 outcome ok
@@ -233,13 +233,13 @@ PASS  QryptLatencyMs SampleCount = qrypt_call lines (same minutes)  1 vs 1 (afte
 13:13:40.971Z seeding_failed job 5eb98575… cause QRYPT_RATE_LIMITED   (+ SeedingFailures EMF)
 ```
 
-So the correct verdict is **FAIL on "no Qrypt 429"** as well as on "only 202 or 429".
+Recomputed afterwards on the full data (WS4, from the same log group and metric, no new submits): **2 Qrypt calls, rolling-10 s max 2, SampleCount 2 = 2 log lines**. So the correct verdict is **FAIL on "no Qrypt 429"** as well as on "only 202 or 429"; the rolling-10 s checks pass with max 2 (≤ 11 and ≤ 30). WS5 spotted the wrong "max 1".
 
 **Finding (reported to WS0):**
 - The limiter did what contract change 005 specifies: 1 slot in window 1791897219 and 1 in 1791897220, then 38 clean 429s with `Retry-After: 1`.
 - Fixed 1 s windows still allow two calls about 1 s apart, and in the worst case milliseconds apart across a boundary. Qrypt rejected the second call with 429.
 - Request start times, derived as log time minus latency: 39.508 s and 40.699 s, a 1.19 s gap. From the first response (39.792 s) to the second request: 0.91 s. So Qrypt's limit is not "one per aligned second". It behaves like a sliding window or a minimum spacing of more than 1 s.
-- Fail-closed held: 503 naming the cause, nothing written. The assignment's limit (≤ 30 per 10 s) is met (max 1).
+- Fail-closed held: 503 naming the cause, nothing written. The assignment's limit (≤ 30 per 10 s) is met (max 2).
 
 ## Burst at cap 10 (contract change 004), build_sha f3873f8, 2026-10-13 12:55:43Z
 
