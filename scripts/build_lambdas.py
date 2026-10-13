@@ -69,7 +69,9 @@ def _install_numpy(target: Path) -> None:
 
 
 def _git(*args: str) -> str:
-    return subprocess.run(["git", *args], cwd=ROOT, check=True, capture_output=True, text=True).stdout.strip()
+    return subprocess.run(
+        ["git", *args], cwd=ROOT, check=True, capture_output=True, text=True
+    ).stdout.strip()
 
 
 def build() -> dict[str, dict[str, str | int]]:
@@ -79,7 +81,11 @@ def build() -> dict[str, dict[str, str | int]]:
     with tempfile.TemporaryDirectory() as tmp:
         deps = Path(tmp)
         _install_numpy(deps)
-        vendored = [e for top in sorted(p.name for p in deps.iterdir() if p.name != "bin") for e in _files(deps, top)]
+        vendored = [
+            e
+            for top in sorted(p.name for p in deps.iterdir() if p.name != "bin")
+            for e in _files(deps, top)
+        ]
         _write_zip(BUILD / "worker.zip", core + _files(SRC, "qmc_worker") + vendored)
 
     zips = {}
@@ -89,7 +95,9 @@ def build() -> dict[str, dict[str, str | int]]:
             sys.exit(f"{name} is {len(data)} bytes, over Lambda's 50 MB upload limit")
         zips[name] = {
             "sha256": hashlib.sha256(data).hexdigest(),
-            "sha256_b64": base64.b64encode(hashlib.sha256(data).digest()).decode(),  # = source_code_hash
+            "sha256_b64": base64.b64encode(
+                hashlib.sha256(data).digest()
+            ).decode(),  # = source_code_hash
             "bytes": len(data),
         }
     with zipfile.ZipFile(BUILD / "api.zip") as zf:
@@ -117,7 +125,9 @@ def main() -> None:
         second = build()
         for name in first:
             same = first[name]["sha256"] == second[name]["sha256"]
-            print(f"{name}: {first[name]['sha256']} {'identical' if same else 'DIFFERS: ' + str(second[name]['sha256'])}")
+            print(
+                f"{name}: {first[name]['sha256']} {'identical' if same else 'DIFFERS: ' + str(second[name]['sha256'])}"
+            )
             if not same:
                 sys.exit(1)
     for name, z in first.items():
