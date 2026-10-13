@@ -7,14 +7,16 @@ array, ``np.maximum``, per-chunk ``np.sum``, ``math.fsum`` across chunks. No ``@
 
 from __future__ import annotations
 
+import math
 from collections.abc import Mapping
 
-import numpy as np  # noqa: F401  (the only NumPy importers are sim and fingerprint)
+import numpy as np
 
 from qmc_core.aggregate import ShardResult
+from qmc_core.params import ALGO_VERSION, CHUNK_SIZE
+from qmc_core.seeds import shard_generator
 
-ALGO_VERSION = "qmc-sim/v1"
-CHUNK_SIZE = 131_072  # 2**17; never change for an existing ALGO_VERSION
+__all__ = ["ALGO_VERSION", "CHUNK_SIZE", "ShardResult", "simulate_shard"]
 
 
 def simulate_shard(
@@ -29,4 +31,22 @@ def simulate_shard(
 
     ``"antithetic"`` raises NotImplementedError until QMC-108.
     """
-    raise NotImplementedError
+    if variance_reduction != "none":
+        raise NotImplementedError(f"variance_reduction {variance_reduction!r} (QMC-108)")
+    S0, K, r, sigma, T = (float(params[k]) for k in ("S0", "K", "r", "sigma", "T"))
+    drift = (r - 0.5 * sigma * sigma) * T
+    vol = sigma * math.sqrt(T)
+    disc = math.exp(-r * T)
+    rng = shard_generator(master_int, shard_index)
+    sums: list[float] = []
+    sumsq: list[float] = []
+    remaining = shard_paths
+    while remaining > 0:
+        m = min(chunk_size, remaining)
+        z = rng.standard_normal(m)
+        s_t = S0 * np.exp(drift + vol * z)
+        x = disc * np.maximum(s_t - K, 0.0)
+        sums.append(float(np.sum(x)))
+        sumsq.append(float(np.sum(x * x)))
+        remaining -= m
+    return ShardResult(n=shard_paths, sum=math.fsum(sums), sum_sq=math.fsum(sumsq))

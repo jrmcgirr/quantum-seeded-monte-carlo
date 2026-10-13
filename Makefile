@@ -49,7 +49,7 @@ test-golden: ## golden-hash tests inside the Lambda Python image (Docker, x86_64
 	  -e QMC_ENFORCE_PINNED_DISPATCH=true -e NPY_DISABLE_CPU_FEATURES="$(NPY_DISABLE_CPU_FEATURES)" \
 	  -e PYTHONDONTWRITEBYTECODE=1 $(LAMBDA_IMAGE) -c '\
 	    pip install -q --no-compile --target /tmp/deps --require-hashes -r requirements/worker.txt && \
-	    pip install -q --no-compile --target /tmp/deps pytest && \
+	    pip install -q --no-compile --target /tmp/deps pytest hypothesis "moto[dynamodb,sqs,ssm]" && \
 	    PYTHONPATH=/tmp/deps:/repo/src:/repo python -m pytest -p no:cacheprovider -m lambda_image $(ARGS)'
 
 build: ## deterministic build/api.zip, build/worker.zip and build/manifest.json

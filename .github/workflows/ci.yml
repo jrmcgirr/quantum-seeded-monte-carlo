@@ -1,0 +1,103 @@
+# Mirror of .gitlab-ci.yml (D19): runs on every push the GitLab mirror makes. No deploys.
+name: ci
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+env:
+  NPY_DISABLE_CPU_FEATURES: "X86_V4 AVX512_ICL AVX512_SPR"
+
+jobs:
+  lint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run ruff check .
+      - run: uv run ruff format --check .
+
+  ssm-data-source-guard:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: No data "aws_ssm_parameter" in infra (I6, R10)
+        run: |
+          if [ -d infra ] && grep -rnE 'data\s+"aws_ssm_parameter"' infra/; then
+            echo 'data "aws_ssm_parameter" is banned (HANDOFF §8.1)'; exit 1
+          fi
+
+  unit:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+      - run: uv sync --frozen
+      - run: uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=term --cov-report=xml:coverage.xml --cov-fail-under=80 --junitxml=junit.xml
+      - run: uv run pytest tests/core -q -m "not lambda_image" --cov=qmc_core --cov-fail-under=90 --no-header
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unit-reports
+          path: |
+            junit.xml
+            coverage.xml
+
+  golden:
+    runs-on: ubuntu-24.04
+    container: public.ecr.aws/lambda/python:3.13
+    env:
+      QMC_ENFORCE_PINNED_DISPATCH: "true"
+      PYTHONDONTWRITEBYTECODE: "1"
+    steps:
+      - run: dnf install -y -q tar gzip >/dev/null
+      - uses: actions/checkout@v4
+      - run: pip install -q --no-compile --target /tmp/deps --require-hashes -r requirements/worker.txt
+      - run: pip install -q --no-compile --target /tmp/deps pytest hypothesis "moto[dynamodb,sqs,ssm]"
+      - run: PYTHONPATH=/tmp/deps:src:. python -m pytest -p no:cacheprovider -m lambda_image -v
+
+  terraform:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - id: infra
+        run: echo "present=$([ -n "$(find infra -name '*.tf' 2>/dev/null)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.infra.outputs.present == 'true'
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.16.5"
+      - if: steps.infra.outputs.present == 'true'
+        run: |
+          terraform fmt -check -recursive infra
+          terraform -chdir=infra init -backend=false -input=false
+          terraform -chdir=infra validate
+
+  tflint:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - id: infra
+        run: echo "present=$([ -n "$(find infra -name '*.tf' 2>/dev/null)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.infra.outputs.present == 'true'
+        uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.64.0
+      - if: steps.infra.outputs.present == 'true'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          tflint --chdir=infra --init
+          tflint --chdir=infra --recursive
+
+  checkov:
+    runs-on: ubuntu-24.04
+    continue-on-error: true # until QMC-119
+    steps:
+      - uses: actions/checkout@v4
+      - id: infra
+        run: echo "present=$([ -n "$(find infra -name '*.tf' 2>/dev/null)" ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+      - if: steps.infra.outputs.present == 'true'
+        run: pipx run checkov==3.3.28 -d infra --quiet --compact
