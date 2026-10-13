@@ -181,7 +181,17 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill. Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
 
-**Qrypt rate limit.** At most **1** Qrypt call per 1 s window, matching Qrypt's real limit of about 1 call/s. That is ≤ 1 per second and ≤ 11 in any rolling 10 s (a 10 s interval that starts mid-second touches 11 aligned 1 s windows), under the assignment's 30 (D10, contract change 005). Excess submits get 429 `ENTROPY_RATE_LIMITED` with `Retry-After: 1` and are never seeded from a reused or local source. *TBD: WS4's burst at the 1 s window.* The earlier runs are in D10 and `docs/TEST_RESULTS.md`. At 15 per 10 s, the burst gave 15 × 202 and 25 × 429. At 10 per 10 s, Qrypt itself rejected 9 of the 10 near-simultaneous calls, which failed closed as 503 `QRYPT_RATE_LIMITED`. That result is why the window became 1 s.
+**Qrypt rate limit.** The assignment requires that concurrent submissions never exceed Qrypt's 30 requests per 10 s. Our limiter allows at most 1 Qrypt call per aligned 1 s window, so ≤ 11 in any rolling 10 s (D10, contract change 005). Overflow is rejected with 429 `ENTROPY_RATE_LIMITED` and `Retry-After`. A submit that Qrypt itself refuses fails closed: a 503 naming the cause, no job written.
+
+Three bursts of 40 concurrent submits (WS4, `make burst`, `docs/TEST_RESULTS.md`) **never exceeded 30 per 10 s (measured max 15)**:
+
+| Run | Limiter | 202 | Our 429 (with `Retry-After`) | 503 `QRYPT_RATE_LIMITED` (Qrypt's own 429) | Max Qrypt calls in any 10 s |
+| --- | --- | --- | --- | --- | --- |
+| 12:01:50Z, build `d0af0b1` | 15 per 10 s | 15 | 25 | 0 | 15 |
+| 12:55:43Z, build `f3873f8` | 10 per 10 s (004) | 1 | 30 | 9 | 10 |
+| 13:13:37Z, build `6dcb3c2` | 1 per 1 s (005) | 1 | 38 | 1 | 2 (one 200, one 429; `qrypt_call` log lines) |
+
+The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z. Even with 1 s windows, a call 1.19 s after the previous one was refused, so Qrypt's limit behaves like a sliding window or a minimum spacing. *TBD: a minimum-spacing limiter is under discussion (WS0, WS4).*
 
 ## Why the worker fails closed at init
 
