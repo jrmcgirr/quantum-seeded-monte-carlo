@@ -9,7 +9,7 @@ dependencies = []
 [dependency-groups]
 dev = [
     "boto3",
-    "botocore",
+    "botocore[crt]",  # `aws login` credentials need the CRT (first apply)
     "hypothesis",
     "moto[dynamodb,sqs,ssm]>=5.1",
     # Same pin as requirements/worker.txt (HANDOFF §12).
