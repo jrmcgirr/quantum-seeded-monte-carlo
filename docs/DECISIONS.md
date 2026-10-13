@@ -210,7 +210,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - The fail-closed self-check at worker init (D2) is the guard that actually counts. If `exp` ever dispatches to an AVX-512 target, the worker refuses to run.
   - Setting `NPY_DISABLE_CPU_FEATURES=X86_V3` drops `exp` to the `X86_V2` baseline, which shows the variable does take effect.
 - **Alternatives:** relying on the environment variable alone, which a typo would silently defeat; pinning the baseline with `X86_V3` disabled as well, which is slower and unnecessary while AVX2 is universal on Lambda x86.
-- **Evidence:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative. *(WS5: cite its run at G3.)*
+- **Evidence:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative but **has not run yet**: GitLab has no runner and the GitHub mirror is not set up (Day 0 step 0.6). *(WS5: cite the run link from WS0 when it exists.)*
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
