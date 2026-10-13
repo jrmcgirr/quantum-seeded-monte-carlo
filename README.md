@@ -3,8 +3,6 @@
 <!-- One-line description (≤ 120 characters; final wording at G4): -->
 **Serverless Monte Carlo option pricing on AWS, seeded by Qrypt quantum entropy, replayable bit for bit, at $0/month.**
 
-> **Status: skeleton (QMC-150).** Headings are final; text marked *TBD* is filled in from G1–G3 evidence (TEST_RESULTS, BENCHMARKS, `terraform state list`). Nothing below the quick-start has been run yet.
->
 > **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov (blocking since MR !37), and a guard against `data "aws_ssm_parameter"`. Also green on GitHub Actions, where the golden job runs natively on x86 ([run 38392842904](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38392842904), `d0af0b1`). Latest: [run 38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576) on `61d8b42`, all 7 jobs green, including the antithetic golden constants and Checkov as a blocking job.
 
 ## What it does and for whom
@@ -39,7 +37,7 @@ Every AWS resource, the submit and replay sequences, and the fail-closed branch:
 
 ### Prerequisites
 
-- An AWS account and CLI v2 credentials with admin rights in **us-east-2** (*TBD: note for other Regions*).
+- An AWS account and CLI v2 credentials with admin rights. The stack defaults to **us-east-2**, the only Region we tested. To use another Region, set `region = "<region>"` in the settings file (step 3) and create the SSM parameter in that same Region (step 2).
 - Terraform ≥ 1.10, Python 3.13, [uv](https://docs.astral.sh/uv/), `make`. Docker is optional (only for `make test-golden`).
 - If you sign in with `aws login`, Python tools need `botocore[crt]` to read those credentials; `make setup` installs it.
 - A Qrypt **Entropy** token from [portal.qrypt.com](https://portal.qrypt.com).
@@ -71,7 +69,23 @@ unset QRYPT_API_KEY
 
 ### 3. Settings, build and deploy
 
-*TBD: settings file location and contents from `infra/terraform.tfvars.example` (WS1), including `alert_email`.*
+Settings live **outside the checkout**, at `~/.qmc/dev.tfvars`, so they can never be committed. Terraform state goes to `~/.qmc/state/dev.tfstate`. Start from the example:
+
+```sh
+mkdir -p ~/.qmc && cp infra/terraform.tfvars.example ~/.qmc/dev.tfvars && chmod 600 ~/.qmc/dev.tfvars
+```
+
+| Setting | Default | What it does |
+| --- | --- | --- |
+| `alert_email` | none (**required**) | Receives alarm and Budget emails through the `qmc-dev-alerts` SNS topic |
+| `create_grader_user` | `false` | Creates the invoke-only IAM user `qmc-dev-grader`; its access key is made by CLI, never by Terraform |
+| `enable_fault_injection` | `false` | Accepts `fault_injection.fail_shards`, for the forced-failure demo |
+| `worker_reserved_concurrency` | `null` | Hard cap on concurrent workers; see below |
+| `create_budget` | `true` | The account-wide $1 Budget; only one environment per account should create it |
+| `enable_step_functions` | `false` | The optional watcher (contract change 007) |
+| `region` | `us-east-2` | See Prerequisites |
+
+The file holds no secrets: the Qrypt token is only in SSM.
 
 **Worker reserved concurrency.** Check your account's Lambda concurrency limit:
 
@@ -95,7 +109,17 @@ uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 
 uv run python clients/qmc.py wait <job_id>
 ```
 
-`uv run` uses the project environment from `make setup`, which has botocore for SigV4 signing. *TBD: the full flag list from `clients/qmc.py --help` (WS2).*
+`uv run` uses the project environment from `make setup`, which has botocore for SigV4 signing. The client finds the URL from `terraform output` in this checkout, or from `--url` or `$QMC_API_URL`, and signs with your normal AWS credentials.
+
+| Command | Does |
+| --- | --- |
+| `submit` | `POST /jobs`. Flags `--S0 --K --r --sigma --T --paths --shards`, plus `--antithetic`, `--queue` (opt-in PENDING_ENTROPY), `--fail-shards 3 …` (needs `enable_fault_injection`), or `--file body.json` |
+| `wait <id>` | Polls every 2 s until COMPLETE, PARTIAL or FAILED, printing each status change |
+| `get <id>` / `replay <id>` / `list` / `health` | `GET /jobs/{id}` / `POST /jobs/{id}/replay` / `GET /jobs` / `GET /health` |
+
+Output is the JSON response; the exit code is non-zero on any HTTP status ≥ 400.
+
+Submits are spaced at least 2 s apart by our Qrypt limiter. A second submit within 2 s gets 429 `ENTROPY_RATE_LIMITED` with a `Retry-After`, unless it asks to queue (`--queue`).
 
 ### 5. Read the result and the Black-Scholes comparison
 
@@ -131,7 +155,16 @@ aws iam list-access-keys --user-name qmc-dev-grader
 aws iam delete-access-key --user-name qmc-dev-grader --access-key-id <AccessKeyId>
 ```
 
-*TBD: what to check afterwards (no `/aws/lambda/qmc-*` log groups, no SNS subscriptions left) and how to delete the SSM parameter.* WS4's drift check found no orphans after a full destroy (`docs/TEST_RESULTS.md`).
+Then remove what Terraform never owned, and check that nothing is left:
+
+```sh
+aws ssm delete-parameter --region us-east-2 --name /qmc/qrypt-api-key
+aws logs describe-log-groups --region us-east-2 --log-group-name-prefix /aws/lambda/qmc-   # expect []
+aws sns list-topics --region us-east-2 --query "Topics[?contains(TopicArn, 'qmc-')]"        # expect []
+aws dynamodb list-tables --region us-east-2 --query "TableNames[?starts_with(@, 'qmc-')]"   # expect []
+```
+
+Terraform creates every log group itself, with 14-day retention, so destroy removes them. WS4's drift check found no orphans after a full destroy (`docs/TEST_RESULTS.md`).
 
 ## Calling our deployed endpoint
 
@@ -163,7 +196,51 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 | `POST /jobs/{id}/replay` | Re-run from the stored seed; reports `replay_check` | 202 |
 | `GET /health` | DynamoDB and SSM reachability, deployed build sha | 200 / 503 |
 
-*TBD: request fields and limits, the job view, and the error table (HANDOFF §5), checked against the deployed API.*
+Every route needs a SigV4-signed request (`AWS_IAM`). Every response is JSON and carries `x-request-id` (the Lambda request id). The full contract is HANDOFF §5.
+
+**Request** (`POST /jobs`, a JSON object ≤ 16 KiB). Every failed rule is reported at once in one `VALIDATION_ERROR`, with a `details` list. Limits are the deployed values (`GetFunctionConfiguration` on `qmc-dev-api`, build `8e0eac5`).
+
+| Field | Rule |
+| --- | --- |
+| `S0`, `K` | number, `0 < x ≤ 1e6` |
+| `r` | number, `−1 ≤ r ≤ 1` |
+| `sigma` | number, `0 < sigma ≤ 5` |
+| `T` | number of years, `0 < T ≤ 50` |
+| `paths` | JSON **integer** (`1e6` and `1000000.0` are rejected), `2 ≤ paths ≤ 10,000,000` |
+| `shards` | integer, `1 ≤ shards ≤ 50`, `shards ≤ paths`, and at most 1,000,000 paths per shard |
+| `variance_reduction` | optional: `"none"` (default) or `"antithetic"` (even `paths ≥ 4`) |
+| `on_entropy_failure` | optional: `"reject"` (default) or `"queue"` (PENDING_ENTROPY, below) |
+| `fault_injection` | optional: `{"fail_shards": [i, …]}`, each `0 ≤ i < shards`; enabled on our deployed stack (SECURITY.md) |
+| anything else | rejected as `unknown field` |
+
+**Job view** (`GET /jobs/{id}`), the main fields:
+- `status`: `QUEUED`, then `RUNNING` (derived while shards finish), then `COMPLETE`, `PARTIAL` (with `failed_shards` and a `partial_result` over the shards that did finish) or `FAILED`.
+- `progress` `{done, failed, total}`.
+- `result` `{estimate, std_error, ci95, n}`, with exact hex forms of each.
+- `reference` `{black_scholes, z_score, within_3se}`.
+- `master_seed_hex` and `seed_provenance`: the Qrypt call's time, latency, the SHA-256 of the block, and the KDF.
+- `fingerprint`: Python, NumPy, CPU architecture, SIMD target, algorithm version, chunk size.
+- `replay_check`, on a replay.
+- `cost_estimate`.
+
+**Errors.** Each is `{"error": {"code", "message", "details"?}}`. A handler never raises; anything unexpected becomes `INTERNAL_ERROR` with the request id.
+
+| HTTP | Code | When |
+| --- | --- | --- |
+| 400 | `VALIDATION_ERROR`, `INVALID_JSON`, `BODY_TOO_LARGE`, `UNSUPPORTED`, `FAULT_INJECTION_DISABLED` | A bad request; nothing is written |
+| 404 | `JOB_NOT_FOUND`, `ROUTE_NOT_FOUND` | Unknown job id or path |
+| 405 | `METHOD_NOT_ALLOWED` | Known path, wrong method |
+| 409 | `JOB_NOT_REPLAYABLE` | Replay of a job that is not COMPLETE |
+| 429 | `ENTROPY_RATE_LIMITED` | Our 2 s Qrypt gap is taken; `Retry-After` gives the seconds until it ends |
+| 503 | `QRYPT_AUTH_FAILED`, `QRYPT_FORBIDDEN` | Qrypt 401, or 403: the token is invalid or expired, or the entropy quota is used up (Qrypt answers both the same way) |
+| 503 | `QRYPT_RATE_LIMITED` | Qrypt's own 429, not retried; `Retry-After: 10` |
+| 503 | `QRYPT_SERVER_ERROR`, `QRYPT_ENTROPY_UNAVAILABLE`, `QRYPT_TIMEOUT`, `QRYPT_UNREACHABLE` | Qrypt 5xx, 503, the 2.5 s deadline, or a network failure (one quick retry if the gap allows) |
+| 502 / 500 | `QRYPT_BAD_RESPONSE` / `QRYPT_BAD_REQUEST` | An unusable or already-used entropy block / Qrypt rejected our request |
+| 503 | `SECRET_UNAVAILABLE` | The token could not be read from SSM |
+| 503 | `ENQUEUE_FAILED` | SQS refused the shards after retries; the job is marked FAILED |
+| 500 | `INTERNAL_ERROR` | Anything unexpected |
+
+Every seeding error (`ENTROPY_RATE_LIMITED`, any `QRYPT_*` code, `SECRET_UNAVAILABLE`) writes **no job** (I1), unless the submit opted into queueing.
 
 **Antithetic variates (opt-in).** Add `"variance_reduction": "antithetic"` to a submit (with an even `paths` ≥ 4). Each pair `(z, −z)` counts as one sample, so `result.n` is the number of pairs. At 1M paths the standard error drops from 0.0147 to 0.0104, a ratio of 0.707, so the variance is about halved at no extra simulation cost. Locally the estimate was z = +0.868 from Black-Scholes, with a seed fixed before the code existed (`tests/correctness/test_antithetic.py`). On the deployed stack, job `166f446d…` gave 500,000 pairs, z = −0.825 and SE 0.707× the plain job's, and its replay `e565b04f…` was bit-identical (D15, [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
 
@@ -185,7 +262,18 @@ An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing se
 
 ## How bit-identical replay works, and when it would not hold
 
-*TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
+**The seed chain** (`src/qmc_core/seeds.py`):
+1. The API takes one fresh 1,024-byte block from Qrypt and records its SHA-256, so a block is never used twice.
+2. HKDF-SHA256 turns the block into a 256-bit master seed, using a fixed salt and the info string `qmc/master-seed/v1|<job_id>`. The seed is stored as `master_seed_hex`.
+3. Shard *i* draws from `PCG64DXSM(SeedSequence(master, spawn_key=(i,)))`. Its random stream depends only on the master seed and *i*, never on which worker runs it, in what order, or how often.
+4. A replay creates a new job with the original's seed, parameters and sharding. It makes no Qrypt call.
+
+**Why the numbers come out the same, bit for bit:**
+- NumPy is pinned by hash, the functions are x86_64, and `NPY_DISABLE_CPU_FEATURES` stops NumPy from using AVX-512 for `exp`, which differs by 1 ULP.
+- Each shard simulates in fixed chunks of 131,072 paths, and adds them up with `math.fsum`, which does not depend on the order of additions.
+- Results are stored as hex floats (`float.hex()`), and replay compares those strings, not rounded decimals.
+
+**The fingerprint.** Each shard records Python, NumPy, the CPU architecture, NumPy's `exp` SIMD target, the algorithm version, the generator and the chunk size. Replay compares every shard's sums byte for byte, and the fingerprints separately. CPU model strings differ between Lambda hosts and are deliberately left out of the match. Replay would stop being bit-identical if the algorithm version, NumPy build, architecture or SIMD target changed. The fingerprint names which one did.
 
 **Replay ×20** (QMC-146, build `855e8d6`, `docs/TEST_RESULTS.md`): `make replay-check N=20` replayed the e2e reference job (1M paths, 10 shards) 20 times, in four batches of 5 spaced at least 10 minutes apart. **All 20 were bit-identical**, with `fingerprint_match` true and no shard diffs. The run covered 2 CPU model strings (`Intel(R) Xeon(R) Processor` and `… @ 2.50GHz`) and 17 distinct worker execution environments.
 
@@ -193,7 +281,24 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 ## Guardrails: Budget, alarms, limits and custom metrics
 
-*TBD: $1 Budget, seven alarms, validation limits and concurrency caps, with the deployed values. Custom metrics: Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard; the metrics themselves come from EMF log lines, so no role needs the `cloudwatch:PutMetricData` wildcard.*
+Deployed values, read on 2026-10-13 with `DescribeAlarms`, `GetFunctionConcurrency`, `ListEventSourceMappings` and `GetFunctionConfiguration` (build `8e0eac5`):
+
+- **Budget:** `qmc-monthly`, $1 a month. It alerts through SNS on actual spend above 1% ($0.01) and above 100%, and on forecast spend above 100% ([docs/COST.md](docs/COST.md)).
+- **Seven alarms**, each sending email through `qmc-dev-alerts`, all OK at the time of reading:
+
+  | Alarm | Fires when |
+  | --- | --- |
+  | `qmc-dev-dlq-depth` | Any message in the DLQ (1-minute maximum > 0) |
+  | `qmc-dev-queue-age` | The oldest shard message is over 120 s old |
+  | `qmc-dev-worker-errors`, `qmc-dev-api-errors` | Any Lambda error in a minute |
+  | `qmc-dev-worker-throttles` | Any worker throttle in a minute |
+  | `qmc-dev-jobs-partial` | Any job ends PARTIAL |
+  | `qmc-dev-seeding-failures` | Any seeding failure in 5 minutes |
+
+- **Limits:** the request rules above (≤ 10M paths, ≤ 50 shards, ≤ 1M paths per shard).
+- **Concurrency:** the queue mapping runs at most 5 workers at once (`maximum_concurrency`, batch size 1). The worker also has reserved concurrency 10 on our account. Each job has a 900 s deadline: a `GET` after it marks any unfinished shards failed, and the job ends PARTIAL (D9).
+- **Qrypt:** at most one call per 2 s (below).
+- **Custom metrics, and how they relate to Terraform:** there are 8, in namespace `QMC/dev` with no dimensions: `JobsSubmitted`, `JobsCompleted`, `JobsPartial`, `ShardFailures`, `SeedingFailures`, `PathsSimulated`, `EntropyKiB` and `QryptLatencyMs`. Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard on them. The metrics themselves come from Embedded Metric Format (EMF) lines in the functions' logs, so no role needs `cloudwatch:PutMetricData`, whose only valid resource is `*` (D11).
 
 **Dashboard `qmc-dev`** (all 8 custom metrics plus Lambda and SQS metrics). Rendered read-only with `AWS_PROFILE=qmc uv run python docs/images/render_dashboard.py --hours 2` at 2026-10-13 12:56Z, after WS4's replay ×20:
 
@@ -228,7 +333,9 @@ The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, 
 
 ## Why the worker fails closed at init
 
-*TBD: the SIMD self-check raises at import when NumPy would dispatch `exp` to AVX-512 (a different result by 1 ULP), because no result is better than a non-reproducible one; handler code otherwise never raises.*
+When the worker starts, it asks NumPy which SIMD target `exp` will use (`qmc_core.fingerprint.assert_reproducible_dispatch`). If that is an AVX-512 target, which gives results 1 ULP different from the pinned AVX2 path, the worker raises before it takes any message (`QMC_ENFORCE_PINNED_DISPATCH=true` on Lambda and in the golden CI job). The messages then wait, retry and reach the DLQ, which alarms. A wrong, non-reproducible number is worse than no number (D2, D36).
+
+This is the only deliberate raise. The handlers otherwise catch everything: the API turns any failure into one of the error responses above, and the worker reports a failed shard to SQS.
 
 ## Qrypt token expiry
 
@@ -247,7 +354,15 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 
 ## Security
 
-*TBD: summary.* Details in [docs/SECURITY.md](docs/SECURITY.md).
+- **The Qrypt token** is an SSM SecureString created by CLI, read at runtime and cached for 300 s. It is never in Terraform state, the repo, environment variables or logs. CI fails if anyone adds `data "aws_ssm_parameter"`, which would copy it into state.
+- **Access:** the Function URL uses `AWS_IAM`, so every call is signed. The grader user can only invoke the URL.
+- **IAM:** each function has its own role, scoped to named ARNs. The only `*` is the log-stream suffix on its own log group.
+- **Encryption:** AWS-owned or AWS-managed keys at rest (no customer-managed keys, $1 each), and queues that refuse non-TLS calls.
+- **Logs** are JSON, with any key containing `token`, `authorization`, `secret` and the like removed. WS4's scan of 1,733 log events found 0 matches for `Bearer`, `authorization`, `api_key`, `token` or the decoy token's marker.
+- **Fail closed:** a bad or missing token rejects the submit, naming the cause, and writes nothing. This was drilled live with a decoy token.
+- **Checkov** blocks merges: 140 passed, 0 failed, and 22 skips, each with its reason.
+
+Details in [docs/SECURITY.md](docs/SECURITY.md).
 
 ## Limitations and what we left out
 
