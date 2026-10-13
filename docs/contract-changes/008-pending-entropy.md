@@ -35,3 +35,9 @@ Submit with `"queue"` and a retryable failure → if fewer than `MAX_PENDING_ENT
 ## Invariants
 
 I1 reworded: "Seeded only from Qrypt. A seeding failure writes nothing — unless the client opted into `on_entropy_failure: "queue"`, in which case only an unseeded `PENDING_ENTROPY` record is written, and it becomes `QUEUED` only with a Qrypt-derived seed or ends `FAILED` naming the cause." No new metric, alarm, queue or mapping.
+
+## Notes after implementation (2026-10-13)
+
+- **Backoff is clipped by the 10 s API timeout:** `PENDING_BACKOFF_MS` "2000,4000,8000" runs as 2, 4, 6, 6 s (each attempt must still fit the Qrypt deadline and the work reserve).
+- **Known limit (accepted, fail-safe):** an abandoned PENDING job past `pending_until` keeps counting toward `MAX_PENDING_ENTROPY` until a GET expires it or it ages out of the newest 50 JOBLIST entries; meanwhile new opt-in submits fail fast as before.
+- WS3's review found two seeder gaps (a QUEUED job without messages after a throttled re-read; a duplicate async delivery doubling the retry chain); fixed in MR !44.
