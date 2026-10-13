@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
-| Burst vs 30 req/10 s | `make burst` | **pending** |
+| Burst vs 30 req/10 s | `make burst` | PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -166,6 +166,26 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 
 Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
 
+## Burst (QMC-143), build_sha d0af0b1, 2026-10-13 12:01:50Z
+
+`AWS_PROFILE=qmc make burst`: 40 concurrent `POST /jobs` (1,000 paths, 1 shard each).
+
+```
+40 submits in 4.01 s: {429: 25, 202: 15} {'ENTROPY_RATE_LIMITED': 25}
+PASS  only 202 or 429 ENTROPY_RATE_LIMITED  {'ENTROPY_RATE_LIMITED': 25}
+PASS  every 429 has Retry-After  
+PASS  limiter: ≤ 15 slots per 10 s window  {1791892910: 15}
+PASS  qrypt_call lines ≥ accepted jobs  15 calls, 15 jobs
+PASS  ≤ 30 Qrypt calls in any rolling 10 s  max 15
+qrypt_call per fixed window (log timestamps): {1791892910: 15}
+FAIL  QryptLatencyMs SampleCount = qrypt_call lines  20 (after 0 s)
+```
+
+- The limiter item `RL#qrypt/1791892910` (window starting 12:01:50Z) has `n = 15`: the cap of HANDOFF D10.
+- 15 `qrypt_call` lines, all in that window; the most in any rolling 10 s is 15, against the assignment's 30.
+- The one FAIL was a tool bug, not a system fault. The SampleCount query started 60 s before the burst, so it also counted the 5 calls from an aborted first attempt (below), giving 20 against 15. The tool now compares the metric and the log lines over the same whole-minute buckets. Re-checked on the same data with no new submits: `burst minute 12:01: (20, 20)`.
+- Aborted first attempt at 12:01:11Z: the 40 threads raced 40 concurrent `make outputs` (`terraform init`), and the tool crashed after 5 submits had gone through (5 × Qrypt 200, 5 KiB). Fixed in `tools/_common.py` (thread-safe `outputs()`). Those 5 calls also showed the real token still had quota after the 403 finding.
+
 ## Fail-closed drill with a decoy token (QMC-143), build_sha d0af0b1, 2026-10-13
 
 Sequence:
@@ -207,4 +227,6 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | deployed edge cases | 0 |
 | make e2e (11:26 UTC) | 1 |
 | make force-failure --duplicate (11:41 UTC) | 2 |
-| **Total** | **3** |
+| fail-closed decoy drill (11:51 UTC, Qrypt 403) | 0 |
+| burst: aborted attempt (12:01:11) + run (12:01:50) | 5 + 15 |
+| **Total** | **23** |

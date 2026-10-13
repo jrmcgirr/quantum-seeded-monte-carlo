@@ -19,6 +19,23 @@ from _common import ENV, Checks, aws, call, log_events, log_group, outputs, poll
 JOB = {"S0": 100.0, "K": 100.0, "r": 0.05, "sigma": 0.2, "T": 1.0, "paths": 1000, "shards": 1}
 
 
+def sample_check(t0: float, t1: float):
+    """(metric SampleCount, qrypt_call lines) over [minute(t0), minute(t1) + 60); None until they
+    agree or the metric has caught up with the log lines."""
+    lo, hi = int(t0 // 60) * 60, int(t1 // 60) * 60 + 60
+    pts = aws("cloudwatch").get_metric_statistics(
+        Namespace=f"QMC/{ENV}",
+        MetricName="QryptLatencyMs",
+        StartTime=lo,
+        EndTime=hi,
+        Period=60,
+        Statistics=["SampleCount"],
+    )["Datapoints"]
+    n_metric = int(sum(p["SampleCount"] for p in pts))
+    n_logs = len(log_events(log_group("api"), '{ $.event = "qrypt_call" }', lo, hi - 0.001))
+    return (n_metric, n_logs) if n_metric >= n_logs else None
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=40)
@@ -82,28 +99,19 @@ def main() -> int:
     check("≤ 30 Qrypt calls in any rolling 10 s", rolling <= 30, f"max {rolling}")
     print(f"qrypt_call per fixed window (log timestamps): {dict(sorted(per_window.items()))}")
 
-    # QryptLatencyMs SampleCount (EMF; minutes of lag possible).
-    def samples():
-        pts = aws("cloudwatch").get_metric_statistics(
-            Namespace=f"QMC/{ENV}",
-            MetricName="QryptLatencyMs",
-            StartTime=t0 - 60,
-            EndTime=t1 + 60,
-            Period=60,
-            Statistics=["SampleCount"],
-        )["Datapoints"]
-        n = int(sum(p["SampleCount"] for p in pts))
-        return n if n >= len(ts) else None
-
+    # QryptLatencyMs SampleCount vs qrypt_call lines over the same whole-minute buckets
+    # (EMF; minutes of lag possible).
     try:
-        n, secs = poll("QryptLatencyMs SampleCount", samples, 600, 30)
+        (n_metric, n_logs), secs = poll(
+            "QryptLatencyMs SampleCount", lambda: sample_check(t0, t1), 600, 30
+        )
         check(
-            "QryptLatencyMs SampleCount = qrypt_call lines",
-            n == len(ts),
-            f"{n} (after {secs:.0f} s)",
+            "QryptLatencyMs SampleCount = qrypt_call lines (same minutes)",
+            n_metric == n_logs,
+            f"{n_metric} vs {n_logs} (after {secs:.0f} s)",
         )
     except TimeoutError as e:
-        check("QryptLatencyMs SampleCount = qrypt_call lines", False, e)
+        check("QryptLatencyMs SampleCount = qrypt_call lines (same minutes)", False, e)
 
     print(f"Qrypt spent: {len(ts)} KiB")
     return check.summary()
