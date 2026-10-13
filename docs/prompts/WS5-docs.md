@@ -40,7 +40,7 @@ You are building the submission package: the README a grader follows to deploy, 
 
 ## Done when
 
-- README, ARCHITECTURE, COST, SECURITY, AI_USAGE and DECISIONS are merged on `main` and mirrored to GitHub.
+- README, ARCHITECTURE, COST, SECURITY, AI_USAGE and DECISIONS are merged on `main` and pushed to GitHub.
 - The video is at most five minutes, covers the five required segments, and is linked from the README.
 - The fresh-clone rehearsal passed and WS4 has recorded it.
 - You report: the one-liner, video length, rehearsal time, and an AI usage log entry in `docs/ai-log/WS5.md`.

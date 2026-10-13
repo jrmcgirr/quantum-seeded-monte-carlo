@@ -365,6 +365,6 @@ Review and merge workstream merge requests at G1–G4; resolve contract changes;
 
 ### QMC-158 · Submission package · `ws5` · `final` · prio 31 · *never cut* · blocked by QMC-156, QMC-157
 
-GitHub mirror current; README has the endpoint URL, the one-liner and the video link; grader user's access key created by CLI and sent privately to the program contact; deliverables checklist from the assignment ticked (source, technical docs, demo video, deployment guide, test results, AI usage log). GitHub repo public (or graders invited); GitHub `main` sha = GitLab `main` sha; Qrypt token expiry covers grading (date in the README); the grader key is created **last** (after any destroy/apply) and the README says it will be deleted after grading; no apply or destroy after the key is sent.
+GitHub `main` current (pushed by the integrator, D19); README has the endpoint URL, the one-liner and the video link; grader user's access key created by CLI and sent privately to the program contact; deliverables checklist from the assignment ticked (source, technical docs, demo video, deployment guide, test results, AI usage log). GitHub repo public (or graders invited); GitHub `main` sha = GitLab `main` sha; Qrypt token expiry covers grading (date in the README); the grader key is created **last** (after any destroy/apply) and the README says it will be deleted after grading; no apply or destroy after the key is sent.
 
 **Acceptance:** Checklist complete; submitted before Wed 11:59 PM Central.
