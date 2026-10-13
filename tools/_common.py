@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -64,9 +65,17 @@ ENV = os.environ.get("ENV", "dev")
 REGION = os.environ.get("AWS_REGION", "us-east-2")
 
 
-@functools.cache
+_outputs_lock = threading.Lock()
+
+
 def outputs() -> dict:
-    """``make outputs`` as {name: value}."""
+    """``make outputs`` as {name: value}; thread-safe (burst and replay_many call it from threads)."""
+    with _outputs_lock:
+        return _outputs()
+
+
+@functools.cache
+def _outputs() -> dict:
     out = subprocess.run(
         ["make", "-s", "outputs", f"ENV={ENV}"],
         check=True,
