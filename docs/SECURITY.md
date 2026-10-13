@@ -8,7 +8,7 @@
 
 ## IAM, one role per function
 
-*TBD: the policy table from the deployed stack; the `:*` log-stream suffix; `kms:Decrypt` outcome.*
+*TBD: the policy table from the deployed stack; the `:*` log-stream suffix.* No `kms:Decrypt` grant: the `aws/ssm` key policy lets the API role decrypt through SSM with `ssm:GetParameter` alone, shown by the first live submit (D39).
 
 ## Function URL auth and the grader user
 

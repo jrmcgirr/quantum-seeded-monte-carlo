@@ -74,21 +74,31 @@ Confirm the SNS subscription email straight away: alarm emails are dropped until
 ### 4. Submit a job and wait
 
 ```sh
-python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10
-python clients/qmc.py wait <job_id>
+uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10
+uv run python clients/qmc.py wait <job_id>
 ```
 
-*TBD: exact flags from `clients/qmc.py --help` (WS2).*
+`uv run` uses the project environment from `make setup`, which has botocore for SigV4 signing. *TBD: the full flag list from `clients/qmc.py --help` (WS2).*
 
 ### 5. Read the result and the Black-Scholes comparison
 
-*TBD: an annotated `COMPLETE` response from `make e2e`: `result.estimate`, `std_error`, `ci95`, `reference.black_scholes`, `z_score`, `within_3se`.*
+Example from the first live run (G1, 2026-10-13, job `5358ec35…`, `docs/ai-log/WS2.md`):
+
+| Field | Value | Meaning |
+| --- | --- | --- |
+| `result.estimate` | 10.476167161519855 (`0x1.4f3cc2ea45059p+3`) | Monte Carlo price; the hex form is what replay compares |
+| `result.std_error` | 0.014748685456949651 | Standard error over 1,000,000 paths |
+| `result.ci95` | [10.447260269204925, 10.505074053834786] | 95% confidence interval |
+| `reference.black_scholes` | 10.450583572185565 | Closed-form price |
+| `reference.z_score`, `within_3se` | 1.735, `true` | Distance from Black-Scholes in standard errors |
+
+*TBD: replace with the annotated output of the rehearsal run.*
 
 ### 6. Replay it
 
 ```sh
-python clients/qmc.py replay <job_id>
-python clients/qmc.py wait <replay_job_id>    # replay_check.bit_identical: true
+uv run python clients/qmc.py replay <job_id>
+uv run python clients/qmc.py wait <replay_job_id>    # replay_check.bit_identical: true
 ```
 
 ### 7. Tear down
@@ -108,7 +118,7 @@ The URL uses `AWS_IAM` auth. Graders receive an invoke-only access key for the I
 ```sh
 export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…     # the grader key
 export QMC_API_URL=<endpoint URL>
-python clients/qmc.py health
+uv run python clients/qmc.py health
 ```
 
 Or with `curl` alone:
@@ -134,6 +144,8 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 ## How bit-identical replay works, and when it would not hold
 
 *TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
+
+First live evidence (G1, 2026-10-13): replay `f1df7275…` of job `5358ec35…` returned `bit_identical: true`, `estimate_equal: true`, 10 shards compared, no shard diffs, `fingerprint_match: true` (`docs/ai-log/WS2.md`).
 
 ## Guardrails: Budget, alarms, limits and custom metrics
 

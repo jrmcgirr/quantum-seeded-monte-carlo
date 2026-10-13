@@ -210,7 +210,8 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - The fail-closed self-check at worker init (D2) is the guard that actually counts. If `exp` ever dispatches to an AVX-512 target, the worker refuses to run.
   - Setting `NPY_DISABLE_CPU_FEATURES=X86_V3` drops `exp` to the `X86_V2` baseline, which shows the variable does take effect.
 - **Alternatives:** relying on the environment variable alone, which a typo would silently defeat; pinning the baseline with `X86_V3` disabled as well, which is slower and unnecessary while AVX2 is universal on Lambda x86.
-- **Evidence:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative but **has not run yet**: GitLab has no runner and the GitHub mirror is not set up (Day 0 step 0.6). *(WS5: cite the run link from WS0 when it exists.)*
+- **Evidence on Lambda (G1, 2026-10-13, build `c768aea`):** job `5358ec35af8a450d9eba939da9f610d9` recorded the worker fingerprint `numpy 2.5.4, glibc 2.34, exp_target X86_V3, dispatch_enforced true, avx512f false` (`docs/ai-log/WS2.md`). That host had no AVX-512, so this shows the pinned target with enforcement on, not the self-check refusing an AVX-512 host.
+- **Evidence in emulation:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative but **has not run yet**: GitLab has no runner and the GitHub mirror is not set up (Day 0 step 0.6). *(WS5: cite the run link from WS0 when it exists.)*
 
 ## D37 Grader invoke policy inline on the user *(first apply, HANDOFF 1.5)*
 
@@ -223,6 +224,12 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Chose:** a separate `aws_lambda_runtime_management_config` resource sets `update_runtime_on = "FunctionUpdate"` on the worker.
 - **Why:** AWS provider 6.68 has no `runtime_management_config` block on `aws_lambda_function`, so HANDOFF §8.2's original form does not exist. The pin is still needed so AWS cannot change glibc (and so `exp`) under a deployed worker during grading (§7.9, I5).
 - **Alternatives:** leaving runtime updates on `Auto` (a mid-grading runtime update could break replay); setting it by CLI (drift, banned).
+
+## D39 No `kms:Decrypt` grant for the SecureString *(G1, HANDOFF 1.6 §8.3)*
+
+- **Chose:** the API role has `ssm:GetParameter` on the token parameter and **no** `kms:Decrypt` statement.
+- **Why:** the token parameter is encrypted with the AWS-managed `alias/aws/ssm` key, whose key policy authorizes account principals calling through SSM. WS2's first live submit (job `5358ec35af8a450d9eba939da9f610d9`, Qrypt HTTP 200, 2026-10-13) read it with `GetParameter(WithDecryption=True)` using only `ssm:GetParameter` (`docs/ai-log/WS2.md`).
+- **Alternatives:** the conditional grant HANDOFF §8.3 held in reserve (`kms:Decrypt` on the `aws/ssm` key with `kms:EncryptionContext:PARAMETER_ARN`). It was not needed, so leaving it out keeps the role smaller.
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
