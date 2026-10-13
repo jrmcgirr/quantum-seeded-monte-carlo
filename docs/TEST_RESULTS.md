@@ -134,6 +134,29 @@ Jobs: `744f0984` (QUEUED at submit), `bec89cf1`, `0ad99503`, `b55c66f3`, `08e56c
 - Qrypt spent: 5 KiB (5 calls), not 10. Refused slots never reach Qrypt.
 - The acceptance check is not loosened; WS0/James decide the fix.
 
+## Step Functions watcher drill (QMC-127, contract change 007), main b0ee345 + `enable_step_functions=true`, 2026-10-13 ~18:18Z
+
+WS0 applied at 18:16:02Z: 3 added and 3 changed, as WS1 predicted. The machine is `arn:aws:states:us-east-2:563632884084:stateMachine:qmc-dev-watcher`.
+
+Definition checks (both pass):
+- `tests/integration/test_sfn_definition.py`, offline:
+  - the definition renders like `templatefile`, with no placeholder left;
+  - every transition resolves;
+  - it polls `JOB#{job_id}/META` consistently;
+  - it waits only on QUEUED or PENDING_ENTROPY, with a poll interval of at least 2 s.
+- `tests/deployed/test_sfn_definition.py`: `ValidateStateMachineDefinition` on the rendered text returned `OK` with no diagnostics.
+
+Drill: `AWS_PROFILE=qmc uv run python tools/sfn_drill.py`. Qrypt: 2 KiB.
+
+| check | result | detail |
+| --- | --- | --- |
+| normal 100k/10: job COMPLETE | PASS | `266a3ade81db4d1b8a976d6ba3e14abf` |
+| normal: execution (named by job_id) SUCCEEDED | PASS | 10 s |
+| forced `fail_shards: [3]`: job PARTIAL | PASS | `c8f8a1f5952f4110b00fd17d0f88c13c` |
+| forced: execution FAILED, error `JobNotComplete` | PASS | 20 s |
+
+The DLQ was purged after the forced job. Switch-off: see below.
+
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
 Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
@@ -671,4 +694,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | cost re-runs after 009 (16:36, 16:37 UTC) | 2 |
 | cost validation with WORKER_OVERHEAD_MS (~18:10 UTC) | 2 |
 | PENDING_ENTROPY burst drill (~18:13 UTC; 5 Qrypt calls) | 5 |
-| **Total** | **99** |
+| Step Functions watcher drill (~18:18 UTC) | 2 |
+| **Total** | **101** |
