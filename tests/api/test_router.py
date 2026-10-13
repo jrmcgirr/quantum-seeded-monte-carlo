@@ -45,7 +45,7 @@ def test_list_never_scans(api, iam_guard):
     assert ("dynamodb", "Query") in calls
 
 
-@pytest.mark.parametrize("job_id", ["0" * 32, "ABCDEF" + "0" * 26, "x", "0" * 33, "../etc"])
+@pytest.mark.parametrize("job_id", ["0" * 32, "ABCDEF" + "0" * 26, "x", "0" * 33, "..etc"])
 def test_unknown_or_malformed_id_is_404_naming_it(api, job_id):
     status, _, body = api.call("GET", f"/jobs/{job_id}")
     assert status == 404

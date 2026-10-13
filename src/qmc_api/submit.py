@@ -19,14 +19,12 @@ from qmc_core.params import (
 )
 from qmc_core.seeds import derive_master_seed
 
-LIMITER_WINDOW_S = 10
 SQS_RETRIES = 2
 LAMBDA_MARGIN_MS = 500
 
 
 def _take_slot(table, now: float) -> bool:
-    window = math.floor(now / LIMITER_WINDOW_S)
-    kwargs = ddb.limiter_take(window, aws.env_int("QRYPT_MAX_PER_WINDOW"), now)
+    kwargs = ddb.limiter_take(ddb.limiter_window(now), aws.env_int("QRYPT_MAX_PER_WINDOW"), now)
     try:
         table.update_item(**kwargs)
     except Exception as exc:
@@ -37,8 +35,7 @@ def _take_slot(table, now: float) -> bool:
 
 
 def _retry_after(now: float) -> int:
-    next_window = (math.floor(now / LIMITER_WINDOW_S) + 1) * LIMITER_WINDOW_S
-    return max(1, math.ceil(next_window - now))
+    return max(1, math.ceil(ddb.limiter_window(now) + ddb.LIMITER_WINDOW_S - now))
 
 
 def submit(event, context) -> tuple[int, dict]:

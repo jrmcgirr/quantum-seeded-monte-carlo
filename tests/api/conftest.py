@@ -79,5 +79,4 @@ def api(ddb_table, queues, qrypt_param, iam_guard, monkeypatch):
         call=call, table=ddb_table, fake=fake, items=items, queued=queued, messages=messages
     )
     qrypt.set_entropy_source(None)
-    aws.reset()
-    secret.clear()
+    secret.clear()  # clients are reset at the next setup (a test may have patched aws.sqs)

@@ -209,6 +209,6 @@ def test_replay_does_not_copy_fault_injection(api, monkeypatch):
     get(api, original)
     api.messages()
     replay_id = api.call("POST", f"/jobs/{original}/replay")[2]["job_id"]
-    [job] = [j for j in api.items("JOB#") if j["job_id"] == replay_id and j["sk"] == "META"]
+    [job] = [j for j in api.items("JOB#") if j["sk"] == "META" and j["job_id"] == replay_id]
     assert "fault_injection" not in job
     assert not any(m["fail"] for m in api.messages())
