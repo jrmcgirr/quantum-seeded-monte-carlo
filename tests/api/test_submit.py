@@ -95,16 +95,18 @@ def test_retry_takes_a_second_limiter_slot(api):
     assert int(window["n"]) == 2 and api.fake.calls == 2
 
 
-def test_sixteenth_submit_in_a_window_is_429(api, monkeypatch):
-    from qmc_api import submit
+def test_submit_past_the_window_cap_is_429(api, monkeypatch):
+    from qmc_api import aws, submit
 
+    cap = aws.env_int("QRYPT_MAX_PER_WINDOW")
+    assert cap == 10  # HANDOFF §8.4 default (contract change 004)
     monkeypatch.setattr(submit.time, "time", lambda: 1_800_000_003.0)  # 7 s left in the window
-    statuses = [api.call("POST", "/jobs", {**REF, "shards": 1})[0] for _ in range(15)]
-    assert statuses == [202] * 15
+    statuses = [api.call("POST", "/jobs", {**REF, "shards": 1})[0] for _ in range(cap)]
+    assert statuses == [202] * cap
     status, headers, body = api.call("POST", "/jobs", REF)
     assert (status, body["error"]["code"]) == (429, "ENTROPY_RATE_LIMITED")
     assert headers["retry-after"] == "7"
-    assert api.fake.calls == 15
+    assert api.fake.calls == cap
 
 
 def test_repeated_entropy_block_is_502_and_no_job(api):
