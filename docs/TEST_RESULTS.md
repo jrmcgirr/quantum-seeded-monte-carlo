@@ -205,7 +205,7 @@ distinct worker execution environments (log streams): 17
   2026/10/13/[$LATEST]fe23c9d2df704f3e9f12f0c368b67b6c
 ```
 
-Both CPU strings are the same Xeon family at X86_V3 with AVX-512 masked (fingerprint `avx512f: false`, `dispatch_enforced: true`). Lambda never placed these shards on a host with a different `exp` path, so this run shows bit-identity across 17 execution environments and two reported CPU models; it does not show it across microarchitectures.
+Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
 
 ## Burst (QMC-143), build_sha d0af0b1, 2026-10-13 12:01:50Z
 
