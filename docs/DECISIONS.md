@@ -56,22 +56,26 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** alarm only (jobs stay QUEUED forever); a DLQ consumer (exact, but drains the DLQ so the alarm may never fire).
 - **Why:** prompt for caught failures, complete for crashes and timeouts, and keeps the assignment's "forced failure trips the DLQ alarm" observable.
 
-## D10 Fixed-window limiter, cap 10, fail fast *(cap changed 15 → 10 by contract change 004, HANDOFF 1.10)*
+## D10 Fixed-window limiter, 1 call per 1 s window, fail fast *(contract changes 004 and 005, HANDOFF 1.11)*
 
 - **Chose:**
-  - A DynamoDB counter per aligned 10 s window, incremented with a conditional `ADD`, capped at **10** per window (`QRYPT_MAX_PER_WINDOW`; the Terraform validation still allows 1–15).
-  - Over budget → 429 `ENTROPY_RATE_LIMITED` with `Retry-After`.
-  - At most one jittered retry of a Qrypt 429, 5xx or network error, within a 2.5 s deadline. Never retry 400, 401 or 403.
-- **Superseded value:** cap **15**, the original choice. Any rolling 10 s window overlaps at most two aligned windows, so 15 per window guaranteed ≤ 30 in any rolling 10 s, exactly the assignment's figure. It changed to 10 because the Qrypt trial key is rated **1 call/s**. Cap 10 gives ≤ 1/s on average and ≤ 20 in any rolling 10 s, still under 30.
-- **Qrypt on 2026-10-13 (pre-004 logs):** 26 calls returned 200, 0 returned 429, and at most 8 calls landed in one second, so Qrypt was not enforcing 1/s. Sustained load above 1/s during grading would still risk 429s.
+  - A DynamoDB counter per aligned window, incremented with a conditional `ADD`.
+  - The window is **1 s** (`QRYPT_WINDOW_S`, Terraform `qrypt_window_s`, validated 1–10). The cap is **1** per window (`QRYPT_MAX_PER_WINDOW`).
+  - Over budget → 429 `ENTROPY_RATE_LIMITED` with `Retry-After` (seconds to the next window, at least 1).
+  - At most one jittered retry of a Qrypt 429, 5xx or network error, within a 2.5 s deadline, and only if another limiter slot is free. Never retry 400, 401 or 403.
+  - Any rolling 10 s sees at most 10 Qrypt calls, against the assignment's 30.
+- **History:**
+  1. **Cap 15 per 10 s** (the original choice). Any rolling 10 s window overlaps at most two aligned windows, so 15 per window guaranteed ≤ 30 in any rolling 10 s, exactly the assignment's figure. WS4's burst at 12:01:50Z (build `d0af0b1`): 40 concurrent submits → 15 × 202, 25 × 429. Qrypt answered all 15 with 200; it was not enforcing its 1 call/s rating then (26 calls with 200 and 0 with 429 that morning, up to 8 in one second).
+  2. **Cap 10 per 10 s** (contract change 004), because the Qrypt trial key is rated 1 call/s. Burst at 12:55:43Z (build `f3873f8`): our limiter let 10 calls through within about one second, as a 10 s window allows. Qrypt answered the first with 200 and the other 9 with **429** (12:55:46.479–.587). Result: 1 × 202, 30 × 429 `ENTROPY_RATE_LIMITED` and 9 × 503 `QRYPT_RATE_LIMITED`. Fail-closed held (nothing written for the 9), and our side stayed at ≤ 10 calls per 10 s. But Qrypt now enforces about 1 call/s, and a 10 s window cannot spread calls within itself.
+  3. **Cap 1 per 1 s** (contract change 005), the current choice.
 - **Alternatives:**
-  - Cap 25–30 per window. Across a window boundary this can reach 50–60 in a rolling 10 s.
-  - Keep 15 and document it. No work, but sustained use could exceed the trial key's rate.
-  - A 1 s window with cap 1. This needs a configurable window (a `qmc_core.ddb` change) and slows the burst test and the benchmarks. A per-second burst is already covered: Qrypt's own 429 fails closed as `QRYPT_RATE_LIMITED`.
+  - Keep 10 per 10 s and document it. Bursts then become mostly Qrypt 503s and trip `SeedingFailures`.
+  - 1 per 10 s. Far below Qrypt's limit, and the benchmarks would take minutes.
+  - Cap 25–30 per 10 s. It can reach 50–60 in a rolling 10 s across a window boundary.
   - A token bucket (more state).
   - Reserved concurrency on submit (it limits concurrency, not rate).
   - PENDING_ENTROPY with a delay queue. A second mapped queue adds ≈ 648k SQS requests/month and breaks $0.
-- **Why:** a fixed window is one conditional write per submit with no extra state, and failing fast satisfies fail-closed (I1).
+- **Why:** a fixed window is one conditional write per submit with no extra state. With a 1 s window it matches Qrypt's real limit, so excess submits get our own 429 with a 1 s `Retry-After` instead of a Qrypt failure. Failing fast satisfies fail-closed (I1).
 
 ## D11 Metrics through EMF
 

@@ -181,7 +181,7 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill. Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
 
-**Qrypt rate limit.** At most **10** Qrypt calls per aligned 10 s window: ≤ 1/s on average and ≤ 20 in any rolling 10 s, under Qrypt's limit of 30. The trial key is rated 1 call/s (D10, contract change 004). A burst of 40 concurrent submits is expected to give 10 × 202 and 30 × 429 `ENTROPY_RATE_LIMITED`, each with `Retry-After`. *TBD: WS4's re-run after the 004 apply.* The earlier run under the old cap of 15 (build `d0af0b1`, `docs/TEST_RESULTS.md`) gave 15 × 202 and 25 × 429, with at most 15 Qrypt calls in any rolling 10 s.
+**Qrypt rate limit.** At most **1** Qrypt call per 1 s window, matching Qrypt's real limit of about 1 call/s. That is ≤ 10 calls in any rolling 10 s, under the assignment's 30 (D10, contract change 005). Excess submits get 429 `ENTROPY_RATE_LIMITED` with `Retry-After: 1` and are never seeded from a reused or local source. *TBD: WS4's burst at the 1 s window.* The earlier runs are in D10 and `docs/TEST_RESULTS.md`. At 15 per 10 s, the burst gave 15 × 202 and 25 × 429. At 10 per 10 s, Qrypt itself rejected 9 of the 10 near-simultaneous calls, which failed closed as 503 `QRYPT_RATE_LIMITED`. That result is why the window became 1 s.
 
 ## Why the worker fails closed at init
 
