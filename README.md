@@ -5,7 +5,7 @@
 
 > **Status: skeleton (QMC-150).** Headings are final; text marked *TBD* is filled in from G1–G3 evidence (TEST_RESULTS, BENCHMARKS, `terraform state list`). Nothing below the quick-start has been run yet.
 >
-> **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov (blocking since MR !37), and a guard against `data "aws_ssm_parameter"`. Also green on GitHub Actions, where the golden job runs natively on x86 ([run 38392842904](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38392842904), `d0af0b1`).
+> **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov (blocking since MR !37), and a guard against `data "aws_ssm_parameter"`. Also green on GitHub Actions, where the golden job runs natively on x86 ([run 38392842904](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38392842904), `d0af0b1`). Latest: [run 38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576) on `61d8b42`, all 7 jobs green, including the antithetic golden constants and Checkov as a blocking job.
 
 ## What it does and for whom
 
@@ -164,6 +164,8 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 | `GET /health` | DynamoDB and SSM reachability, deployed build sha | 200 / 503 |
 
 *TBD: request fields and limits, the job view, and the error table (HANDOFF §5), checked against the deployed API.*
+
+**Antithetic variates (opt-in).** Add `"variance_reduction": "antithetic"` to a submit (with an even `paths` ≥ 4). Each pair `(z, −z)` counts as one sample, so `result.n` is the number of pairs. At 1M paths the standard error drops from 0.0147 to 0.0104, a ratio of 0.707, so the variance is about halved at no extra simulation cost. The estimate was z = +0.868 from Black-Scholes, with a seed fixed before the code existed (D15, `tests/correctness/test_antithetic.py`). *TBD: a deployed antithetic job and its replay.*
 
 ## How bit-identical replay works, and when it would not hold
 
