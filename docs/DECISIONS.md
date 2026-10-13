@@ -279,14 +279,18 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Parse the 403 body. It is the same for both causes.
 - **Invariants:** none change. I1 (fail closed, nothing written, cause named) holds, and the named cause is now accurate.
 
-## D42 `staging` integration branch *(James, 2026-10-13; HANDOFF D42)*
+## D42 Protected `main`, merge requests only *(James, 2026-10-13; HANDOFF 1.15)*
 
 - **Chose:**
-  - Workstream merge requests target **`staging`**.
-  - The integrator merges them, then promotes `staging` → `main` with one merge request whose pipeline must pass.
-  - The integrator then pushes `main` to GitHub and applies from `main`; D33 is unchanged.
-  - GitLab CI runs only for merge-request pipelines (and manual web runs), not for plain pushes. GitHub Actions runs on push to GitHub `main`, the only branch pushed there (D19).
-- **Alternatives:** workstream merge requests straight into `main`, the original flow (D23). *TBD: James's reasons, if he wants them recorded.*
+  - No direct pushes to `main` for anyone, WS0 included: push access is no one, merge is maintainers only, and force push is off.
+  - Every change lands through a merge request whose pipeline must pass.
+  - Source branches are kept after merge.
+  - GitLab CI runs only for merge-request pipelines (and manual web runs), not for plain pushes. GitHub Actions runs on push to GitHub `main` (D19).
+  - Contract changes that span several workstreams are batched by stacking their branches into one merge request, as was done for 003.
+- **Alternatives:**
+  - A `staging` integration branch, with workstream merge requests into `staging` and one promotion merge request into `main`. Tried and dropped the same day (HANDOFF 1.14 → 1.15): protecting `main` already gives the guarantee wanted, without an extra branch to keep in sync.
+  - Unprotected `main` with direct integrator pushes, the original flow (D23).
+- **Why:** protection makes "every change passed CI" a rule that GitLab enforces, rather than a convention.
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 

@@ -37,14 +37,21 @@ def main():
         props = dict(w["properties"], start=f"-PT{a.hours}H", end="P0D", width=800, height=400)
         props.setdefault("region", a.region)
         props["title"] = f"{props.get('title', '')} (last {a.hours} h to {now})"
-        png = cw.get_metric_widget_image(MetricWidget=json.dumps(props), OutputFormat="png")["MetricWidgetImage"]
+        png = cw.get_metric_widget_image(MetricWidget=json.dumps(props), OutputFormat="png")[
+            "MetricWidgetImage"
+        ]
         slug = re.sub(r"[^a-z0-9]+", "-", w["properties"].get("title", "widget").lower()).strip("-")
         path = OUT / f"dashboard-{n:02d}-{slug}.png"
         path.write_bytes(png)
         print(path.name)
 
     alarms = cw.describe_alarms(AlarmNamePrefix=f"{name}-")["MetricAlarms"]
-    lines = [f"# {name} alarm states at {now}", "", "| Alarm | State | Since (UTC) |", "| --- | --- | --- |"]
+    lines = [
+        f"# {name} alarm states at {now}",
+        "",
+        "| Alarm | State | Since (UTC) |",
+        "| --- | --- | --- |",
+    ]
     for al in sorted(alarms, key=lambda x: x["AlarmName"]):
         since = al["StateUpdatedTimestamp"].astimezone(datetime.UTC).strftime("%Y-%m-%d %H:%M:%SZ")
         lines.append(f"| `{al['AlarmName']}` | {al['StateValue']} | {since} |")
