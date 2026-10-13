@@ -56,29 +56,28 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** alarm only (jobs stay QUEUED forever); a DLQ consumer (exact, but drains the DLQ so the alarm may never fire).
 - **Why:** prompt for caught failures, complete for crashes and timeouts, and keeps the assignment's "forced failure trips the DLQ alarm" observable.
 
-## D10 Fixed-window limiter, 1 call per 1 s window, fail fast *(contract changes 004 and 005, HANDOFF 1.11)*
+## D10 Qrypt limiter: 2 s minimum gap, no retry on Qrypt 429, fail fast *(contract changes 004, 005, 006; HANDOFF 1.13)*
 
 - **Chose:**
-  - A DynamoDB counter per aligned window, incremented with a conditional `ADD`.
-  - The window is **1 s** (`QRYPT_WINDOW_S`, Terraform `qrypt_window_s`, validated 1–10). The cap is **1** per window (`QRYPT_MAX_PER_WINDOW`).
-  - Over budget → 429 `ENTROPY_RATE_LIMITED` with `Retry-After` (seconds to the next window, at least 1).
-  - At most one jittered retry of a Qrypt 429, 5xx or network error, within a 2.5 s deadline, and only if another limiter slot is free. Never retry 400, 401 or 403.
-  - Guaranteed bound: ≤ 1 Qrypt call per second and **≤ 11 in any rolling 10 s**, against the assignment's 30. A rolling 10 s interval that does not start on a window boundary touches 11 aligned 1 s windows (corrected from ≤ 10 by WS4; 005 as of `ws0-foundation` `8986762`).
-- **History:**
-  1. **Cap 15 per 10 s** (the original choice). Any rolling 10 s window overlaps at most two aligned windows, so 15 per window guaranteed ≤ 30 in any rolling 10 s, exactly the assignment's figure. WS4's burst at 12:01:50Z (build `d0af0b1`): 40 concurrent submits → 15 × 202, 25 × 429. Qrypt answered all 15 with 200; it was not enforcing its 1 call/s rating then (26 calls with 200 and 0 with 429 that morning, up to 8 in one second).
-  2. **Cap 10 per 10 s** (contract change 004), because the Qrypt trial key is rated 1 call/s. Burst at 12:55:43Z (build `f3873f8`): our limiter let 10 calls through within about one second, as a 10 s window allows. Qrypt answered the first with 200 and the other 9 with **429** (12:55:46.479–.587). Result: 1 × 202, 30 × 429 `ENTROPY_RATE_LIMITED` and 9 × 503 `QRYPT_RATE_LIMITED`. Fail-closed held (nothing written for the 9), and our side stayed at ≤ 10 calls per 10 s. But Qrypt now enforces about 1 call/s, and a 10 s window cannot spread calls within itself.
-  3. **Cap 1 per 1 s** (contract change 005), the current choice. Burst at 13:13:37Z (build `6dcb3c2`): 1 × 202, 38 × 429 `ENTROPY_RATE_LIMITED` (`Retry-After: 1`), and 1 × 503 `QRYPT_RATE_LIMITED`. The limiter gave one slot in each of two consecutive windows. Qrypt refused the second call, which started 1.19 s after the first, so Qrypt's limit behaves like a sliding window or a minimum spacing rather than one call per aligned second. 
-- **Decision after that burst (James, HANDOFF 1.12, R24):** keep the 1 s window with cap 1, and document the boundary case. Qrypt appears to enforce roughly one call per ~1.2 s as a sliding limit. A call that lands just after a window boundary can therefore still get a Qrypt 429, and it fails closed as 503 `QRYPT_RATE_LIMITED` (I1 holds, nothing written). The assignment's 30 per 10 s is met by a wide margin (measured max 2 in that run).
-- **Fallback, if it recurs in normal use:** a **2 s minimum gap** between calls, as contract change 006. One `RL#qrypt/LAST` item is updated with a conditional `SET at = now` that succeeds only if `at <= now - 2 s`, which allows ≤ 5 calls per rolling 10 s.
-- **Not chosen for now:** switching to the 2 s gap straight away. The boundary case already fails closed, and the assignment's limit is met.
+  - A **minimum gap of 2 s between Qrypt calls** (`QRYPT_MIN_GAP_MS` = 2000). One DynamoDB item `RL#qrypt/LAST` is updated with a conditional `SET at_ms = now` that succeeds only if `at_ms <= now - gap` (race-free).
+  - At most 1 call per 2 s, so **≤ 5 in any rolling 10 s**, against the assignment's 30.
+  - Refused → 429 `ENTROPY_RATE_LIMITED` with `Retry-After` = seconds until the gap ends.
+  - **No retry on a Qrypt 429**, because a retry cannot succeed inside the gap. At most one jittered retry on a Qrypt 5xx or network error, within the 2.5 s deadline, and only if the gap allows a new slot. Never retry 400, 401 or 403.
+  - If Qrypt 429s persist at 2 s, raise `qrypt_min_gap_ms` in Terraform; no code change is needed.
+- **History.** Each step was forced by Qrypt's measured behaviour (HANDOFF R24, `docs/TEST_RESULTS.md`, `docs/BENCHMARKS.md`):
+  1. **15 per aligned 10 s window** (the original choice). Any rolling 10 s window overlaps at most two aligned windows, so 15 per window guaranteed ≤ 30, the assignment's figure. Burst at 12:01:50Z (build `d0af0b1`): 40 concurrent submits gave 15 × 202 and 25 × 429. Qrypt answered all 15 with 200; it was not enforcing its 1 call/s rating then (that morning, up to 8 calls in one second all got 200).
+  2. **10 per 10 s** (contract change 004), because the trial key is rated 1 call/s. Burst at 12:55:43Z (build `f3873f8`): the limiter let 10 calls through in about one second. Qrypt answered the first with 200 and the other 9 with 429. Result: 1 × 202, 30 × 429 and 9 × 503 `QRYPT_RATE_LIMITED`.
+  3. **1 per aligned 1 s window** (contract change 005). Burst at 13:13:37Z (build `6dcb3c2`): 1 × 202, 38 × 429 (`Retry-After: 1`) and 1 × 503. Qrypt refused a call 1.19 s after the previous one, so its limit is sliding, not aligned to the second. James first chose to keep 1 s windows and document this, with a 2 s gap as the fallback "if it remains a problem" (HANDOFF 1.12).
+  4. **2 s minimum gap** (contract change 006, the current choice). That trigger fired: `make bench` at a steady 1.5 s pacing (13:20–13:22Z, build `6dcb3c2`) still got 3 Qrypt 429s. Two came 1.519 s and 1.486 s after the previous call, and the 285 ms retry after one of them also got 429.
+- Every rejected submit in these runs failed closed: a 503 naming the cause, no job written (I1). No run exceeded 30 calls in any 10 s; the measured maximum was 15.
 - **Alternatives:**
-  - Keep 10 per 10 s and document it. Bursts then become mostly Qrypt 503s and trip `SeedingFailures`.
-  - 1 per 10 s. Far below Qrypt's limit, and the benchmarks would take minutes.
-  - Cap 25–30 per 10 s. It can reach 50–60 in a rolling 10 s across a window boundary.
+  - Keep 1 s windows and document them. Steady use at 1.5 s pacing still fails some submits.
+  - A sliding-window counter. More state and expressions, for no benefit over a single last-call timestamp at cap 1.
+  - Cap 25–30 per 10 s. This can reach 50–60 in a rolling 10 s across a window boundary.
   - A token bucket (more state).
   - Reserved concurrency on submit (it limits concurrency, not rate).
   - PENDING_ENTROPY with a delay queue. A second mapped queue adds ≈ 648k SQS requests/month and breaks $0.
-- **Why:** a fixed window is one conditional write per submit with no extra state. With a 1 s window it matches Qrypt's real limit, so excess submits get our own 429 with a 1 s `Retry-After` instead of a Qrypt failure. Failing fast satisfies fail-closed (I1).
+- **Why:** a single last-call timestamp is one conditional write per submit. It matches Qrypt's real sliding limit, so excess submits get our own 429 with an exact `Retry-After` instead of a Qrypt failure. Failing fast satisfies fail-closed (I1).
 
 ## D11 Metrics through EMF
 
@@ -279,6 +278,15 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Map 403 to `QRYPT_AUTH_FAILED`. A real quota exhaustion would then be reported as a bad token.
   - Parse the 403 body. It is the same for both causes.
 - **Invariants:** none change. I1 (fail closed, nothing written, cause named) holds, and the named cause is now accurate.
+
+## D42 `staging` integration branch *(James, 2026-10-13; HANDOFF D42)*
+
+- **Chose:**
+  - Workstream merge requests target **`staging`**.
+  - The integrator merges them, then promotes `staging` → `main` with one merge request whose pipeline must pass.
+  - The integrator then pushes `main` to GitHub and applies from `main`; D33 is unchanged.
+  - GitLab CI runs only for merge-request pipelines (and manual web runs), not for plain pushes. GitHub Actions runs on push to GitHub `main`, the only branch pushed there (D19).
+- **Alternatives:** workstream merge requests straight into `main`, the original flow (D23). *TBD: James's reasons, if he wants them recorded.*
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 

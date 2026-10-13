@@ -181,9 +181,9 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill. Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
 
-**Qrypt rate limit.** The assignment requires that concurrent submissions never exceed Qrypt's 30 requests per 10 s. Our limiter allows at most 1 Qrypt call per aligned 1 s window, so ≤ 11 in any rolling 10 s (D10, contract change 005). Overflow is rejected with 429 `ENTROPY_RATE_LIMITED` and `Retry-After`. A submit that Qrypt itself refuses fails closed: a 503 naming the cause, no job written.
+**Qrypt rate limit.** The assignment requires that concurrent submissions never exceed Qrypt's 30 requests per 10 s. Our limiter enforces a **2 s minimum gap** between Qrypt calls, so at most 5 in any rolling 10 s (D10, contract change 006). Overflow is rejected with 429 `ENTROPY_RATE_LIMITED` and a `Retry-After` giving the seconds until the gap ends. A Qrypt 429 is not retried. Any submit that Qrypt itself refuses fails closed: a 503 naming the cause, no job written.
 
-Three bursts of 40 concurrent submits (WS4, `make burst`, `docs/TEST_RESULTS.md`) **never exceeded 30 per 10 s (measured max 15)**:
+Three earlier bursts of 40 concurrent submits, under the earlier limiters (WS4, `make burst`, `docs/TEST_RESULTS.md`), **never exceeded 30 per 10 s (measured max 15)**:
 
 | Run | Limiter | 202 | Our 429 (with `Retry-After`) | 503 `QRYPT_RATE_LIMITED` (Qrypt's own 429) | Max Qrypt calls in any 10 s |
 | --- | --- | --- | --- | --- | --- |
@@ -191,7 +191,7 @@ Three bursts of 40 concurrent submits (WS4, `make burst`, `docs/TEST_RESULTS.md`
 | 12:55:43Z, build `f3873f8` | 10 per 10 s (004) | 1 | 30 | 9 | 10 |
 | 13:13:37Z, build `6dcb3c2` | 1 per 1 s (005) | 1 | 38 | 1 | 2 (one 200, one 429; `qrypt_call` log lines) |
 
-The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z. Even with 1 s windows, a call 1.19 s after the previous one was refused, so Qrypt's limit behaves like a sliding window or a minimum spacing. We keep 1 s windows and document this (D10, HANDOFF R24). Under a burst, the limiter turns overflow into our own 429 with `Retry-After: 1`. Occasionally a call just after a window boundary is still refused by Qrypt. That submit fails closed as 503 `QRYPT_RATE_LIMITED` and can simply be retried. If this happens in normal use, the fallback is a 2 s minimum gap between Qrypt calls (≤ 5 per rolling 10 s), as contract change 006.
+The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z, as a sliding limit. A call 1.19 s after the previous one was refused even with 1 s windows, and a steady 1.5 s pacing in `make bench` still drew 3 Qrypt 429s. That is why the limiter moved, step by step, to the 2 s gap (D10). *TBD: WS4's burst under the 2 s gap.*
 
 ## Why the worker fails closed at init
 
@@ -200,6 +200,17 @@ The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, 
 ## Qrypt token expiry
 
 *TBD: date (must cover the grading window).*
+
+## Measured performance
+
+From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20–13:22Z, [docs/BENCHMARKS.md](docs/BENCHMARKS.md)):
+
+| Measure | Target | Result |
+| --- | --- | --- |
+| Submit latency, warm (client round trip, n = 49) | p95 < 800 ms | p50 **251 ms**, p95 **301 ms** (Lambda `Duration` p50 105 ms, p95 151 ms) |
+| 1,000,000-path job wall clock, 5 runs (server-side `completed_at − created_at`) | < 60 s | **0.18–0.46 s** (client-observed ≤ 2.6 s) |
+| API cold start (natural, `Init Duration`) | reported separately | init p50 **375 ms**; a cold submit costs about 1.05 s on the server |
+| `terraform apply` from empty | < 10 min | *TBD (`make drift-check`)* |
 
 ## Security
 
