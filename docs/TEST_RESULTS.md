@@ -10,7 +10,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 2: distinct, reproducible shard seeds | `tests/correctness/test_seed_independence.py`, `tests/core/test_seeds.py` | PASS; max \|corr\| 0.02805 < 0.05 |
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
-| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (provisional), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
+| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (Docker + CI 52736, both emulated), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure` | **pending** |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed 401 decoy drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); 401 drill **pending** |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed **pending** |
@@ -22,7 +22,11 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
 | Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed 404 PASS; fresh list **pending** |
 | Benchmarks | `make bench` → `docs/BENCHMARKS.md` | **pending** |
-| Coverage ≥ 80% | CI | **pending** |
+| Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
+
+## CI (GitLab pipeline 52736, main ea3820c)
+
+All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `terraform`, `golden`, `unit`. The `unit` job log shows `320 passed, 25 deselected`, `Required test coverage of 80% reached. Total coverage: 96.20%`, then a qmc_core-only run with `207 passed`, `Required test coverage of 90% reached. Total coverage: 100.00%`.
 
 ## Unit and integration (`make test`)
 
@@ -47,7 +51,9 @@ GOLDEN_SUM_HEX = "0x1.fdcf3646e51c2p+19"
 GOLDEN_SUM_SQ_HEX = "0x1.f2c02fc1b1bcep+24"
 ```
 
-**Provisional:** they come from emulation. They become authoritative when a real x86 run agrees (a CI golden job, or `make e2e`'s local-recompute line against Lambda). Native macOS arm64 happens to give the same bits for this shard; that is not a guarantee.
+GitLab CI pipeline [52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736) on `main` ea3820c, job `golden`: `7 passed, 338 deselected`. That includes `test_golden_shard` and `test_exp_target_is_not_avx512`. The runner is James's Mac, so this is also the Lambda image under amd64 emulation, not native x86.
+
+Status: **checked under emulation and against real Lambda x86 by the e2e local recompute** (see `make e2e`). **Provisional:** they come from emulation. They become authoritative when a real x86 run agrees (a CI golden job, or `make e2e`'s local-recompute line against Lambda). Native macOS arm64 happens to give the same bits for this shard; that is not a guarantee.
 
 ## Deployed edge cases (QMC-143), build_sha c768aea
 
