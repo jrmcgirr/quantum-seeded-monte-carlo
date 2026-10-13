@@ -39,7 +39,12 @@ What is deliberately absent, and why:
 
 Both Lambda trust policies require `aws:SourceAccount` to be this account. The client role trusts only this account's root, so only identities in this account that are allowed to assume it can use it.
 
-*TBD: compare the policies with `aws iam get-role-policy` on the deployed roles.*
+**Checked on the deployed stack** (2026-10-13, build `855e8d6`, read-only IAM calls `GetRole`, `ListRolePolicies` / `GetRolePolicy`, `ListAttachedRolePolicies`, `ListUserPolicies` / `GetUserPolicy`, `ListAttachedUserPolicies`, `ListGroupsForUser`, `ListAccessKeys`):
+
+- Each of `qmc-dev-api`, `qmc-dev-worker`, `qmc-dev-client` and `qmc-dev-grader` has exactly one inline policy, and it matches its Terraform policy document statement for statement: the same actions, resources and conditions as the table above.
+- None of the four has an attached managed policy, and the grader belongs to no group.
+- The two Lambda trust policies allow `lambda.amazonaws.com` with `aws:SourceAccount` set to this account. The client role trusts only this account's root.
+- The grader user had **0 access keys** at the time of the check, as intended: its key is created last (D26).
 
 ## Function URL auth and the grader user
 
@@ -68,7 +73,7 @@ Both Lambda trust policies require `aws:SourceAccount` to be this account. The c
 - The block is not stored. Only its SHA-256 is kept, which lets the API refuse a block it has already used.
 - Log groups keep 14 days.
 
-*TBD: a scan of both log groups for the token's prefix, finding nothing.*
+*TBD (WS4): a scan of both log groups for `Bearer`, `authorization`, `api_key` and `token` and for the decoy token's marker, finding nothing. The scan deliberately does not search for the real token's prefix, because that would mean reading the secret.*
 
 ## Fault injection on the graded stack
 
