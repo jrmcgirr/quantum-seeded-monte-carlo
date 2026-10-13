@@ -73,3 +73,22 @@ def test_init_self_check_raises_before_any_message(worker, monkeypatch):
         with pytest.raises(fingerprint.DispatchError):
             importlib.reload(worker)
     importlib.reload(worker)  # restore a healthy module for the remaining tests
+
+
+def test_billing_fields_charge_init_once_and_time_the_invocation(
+    worker, ctx, make_job, ddb_table, iam_guard, monkeypatch
+):
+    """Contract change 009: init_ms on the sandbox's first shard only; invocation_ms covers more
+    than the simulation (duration_ms)."""
+    monkeypatch.setattr(worker, "INIT_MS", 123)
+    monkeypatch.setattr(worker, "_init_unbilled", True)
+    item, msgs = make_job(shards=2)
+
+    with iam_guard("worker"):
+        for m in msgs:
+            worker.handle(event(record(m)), ctx)
+
+    shards = [ddb_table.get_item(Key=ddb.shard_key(item["job_id"], i))["Item"] for i in range(2)]
+    assert [s["init_ms"] for s in shards] == [123, 0]
+    for s in shards:
+        assert s["invocation_ms"] >= s["duration_ms"]

@@ -54,9 +54,13 @@ def _table():
     return _table_for(os.environ["TABLE_NAME"])
 
 
+INIT_MS = int((time.perf_counter() - _INIT_T0) * 1000)
+# Billed once per execution environment: charged to the first shard this sandbox writes (009).
+_init_unbilled = True
+
 logjson.log(
     "init",
-    duration_ms=int((time.perf_counter() - _INIT_T0) * 1000),
+    duration_ms=INIT_MS,
     exp_target=EXP_TARGET,
     fingerprint=FINGERPRINT,
     config={
@@ -94,6 +98,7 @@ def handle(event, context):
 
 def _process(record, context) -> bool:
     """True when the record is done (written, duplicate, or orphan); False to report it failed."""
+    t_entry = time.perf_counter()
     logjson.clear()
     attempt = int(record["attributes"]["ApproximateReceiveCount"])
     logjson.bind(request_id=context.aws_request_id, attempt=attempt)
@@ -105,14 +110,15 @@ def _process(record, context) -> bool:
         return False
     logjson.bind(job_id=msg.job_id, shard_index=msg.shard_index)
     try:
-        _run(msg, attempt, context)
+        _run(msg, attempt, context, t_entry)
         return True
     except Exception as exc:
         _on_failure(record, msg, attempt, exc)
         return False
 
 
-def _run(msg: messages.ShardMessage, attempt: int, context) -> None:
+def _run(msg: messages.ShardMessage, attempt: int, context, t_entry: float) -> None:
+    global _init_unbilled
     if msg.fail and _fault_injection_enabled():
         raise ForcedFailure(f"fault injection on shard {msg.shard_index}")
     if msg.algo_version != sim.ALGO_VERSION:
@@ -129,6 +135,7 @@ def _run(msg: messages.ShardMessage, attempt: int, context) -> None:
     )
     duration_ms = int((time.perf_counter() - t0) * 1000)
 
+    init_ms, _init_unbilled = (INIT_MS if _init_unbilled else 0), False
     table = _table()
     try:
         table.put_item(
@@ -137,6 +144,8 @@ def _run(msg: messages.ShardMessage, attempt: int, context) -> None:
                 msg.shard_index,
                 result,
                 duration_ms=duration_ms,
+                invocation_ms=int((time.perf_counter() - t_entry) * 1000),
+                init_ms=init_ms,
                 memory_mb=int(context.memory_limit_in_mb),
                 attempt=attempt,
                 fingerprint=FINGERPRINT,
