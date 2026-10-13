@@ -1,4 +1,4 @@
-"""make burst (QMC-143): 40 concurrent submits must never put more than 15 Qrypt calls in one
+"""make burst (QMC-143): 40 concurrent submits must never put more than CAP Qrypt calls in one
 limiter window (HANDOFF D10), so never more than 30 in any rolling 10 s (the assignment's limit).
 Spends at most 40 KiB of Qrypt (one per 202, plus any retry).
 
@@ -39,6 +39,9 @@ def sample_check(t0: float, t1: float):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=40)
+    ap.add_argument(
+        "--cap", type=int, default=10, help="QRYPT_MAX_PER_WINDOW (contract change 004)"
+    )
     args = ap.parse_args()
     assert 1 <= args.n <= 40, "burst is capped at 40 submits (Qrypt quota)"
     check = Checks()
@@ -74,7 +77,7 @@ def main() -> int:
             .get("Item")
         )
         slots[w] = int(item["n"]["N"]) if item else 0
-    check("limiter: ≤ 15 slots per 10 s window", max(slots.values()) <= 15, slots)
+    check(f"limiter: ≤ {args.cap} slots per 10 s window", max(slots.values()) <= args.cap, slots)
 
     # qrypt_call log lines: one per HTTP attempt (HANDOFF §9.3).
     pattern = '{ $.event = "qrypt_call" }'
@@ -96,7 +99,14 @@ def main() -> int:
         len(ts) >= codes[202],
         f"{len(ts)} calls, {codes[202]} jobs",
     )
-    check("≤ 30 Qrypt calls in any rolling 10 s", rolling <= 30, f"max {rolling}")
+    check(
+        f"≤ {2 * args.cap} Qrypt calls in any rolling 10 s",
+        rolling <= 2 * args.cap,
+        f"max {rolling}",
+    )
+    check("≤ 30 Qrypt calls in any rolling 10 s (assignment)", rolling <= 30, f"max {rolling}")
+    # Informational: a log line is stamped after its limiter slot, so a call near a boundary can
+    # land in the next window here. The exact per-window count is the RL#qrypt check above.
     print(f"qrypt_call per fixed window (log timestamps): {dict(sorted(per_window.items()))}")
 
     # QryptLatencyMs SampleCount vs qrypt_call lines over the same whole-minute buckets

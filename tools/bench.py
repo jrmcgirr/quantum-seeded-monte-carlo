@@ -1,7 +1,8 @@
 """make bench (QMC-147): the assignment's Performance Benchmarks on the deployed stack.
 
-- Submit latency: 3 warm-ups + N (50) small submits, sequential, paced ≥ 700 ms start-to-start
-  (under the limiter's 15 per 10 s); client-side and REPORT ``Duration``; any 429 counted.
+- Submit latency: 3 warm-ups + N (50) small submits, sequential, paced 1.1 s start-to-start
+  (the limiter allows 10 per 10 s window, contract change 004; the 0.1 s margin absorbs latency
+  jitter so 11 arrivals never share a window); client-side and REPORT ``Duration``; any 429 counted.
 - Cold starts: every REPORT line with ``Init Duration`` in the API and worker log groups
   (natural cold starts only; no configuration change). ``--cold`` times one request; run it
   after ≥ 15 min idle.
@@ -40,7 +41,7 @@ def reports(fn: str, since: float) -> dict[str, tuple[float, float | None]]:
     return out
 
 
-def submits(n: int, pace_s: float = 0.7) -> None:
+def submits(n: int, pace_s: float = 1.1) -> None:
     t_start = time.time()
     rows = []
     for k in range(3 + n):
