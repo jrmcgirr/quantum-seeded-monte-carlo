@@ -338,7 +338,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - **A different fan-in.** Our shards return `{sum, sum_sq, n}`, which add up exactly in any order because `math.fsum` makes the result independent of order. A VaR is a **quantile**, and quantiles do not add. Reproducible fan-in would need a **fixed-edge histogram per shard**: counts plus a per-bin `fsum`. The VaR is then known to within one bin width, and expected shortfall only to within bounds (Acerbi–Tasche).
   - **Correlated assets.** These need a Cholesky factor of the correlation matrix, computed in pure Python with `math.fsum`. `@`, `np.dot` and `np.einsum` are out, because BLAS picks SIMD kernels by CPU, which would break bit-identical replay (D2, I5; PRIMER, "Pricing the option is trivial…").
   - **Effort:** ≈ 43 h. It reopens every interface (request schema, SQS message, shard item, aggregation, replay compare) before G4. A minimal version (histogram, ≤ 10 assets, ≤ 2M paths, a single-asset closed-form check) is ≈ 1.5 days.
-- **Why parked:** it cannot land inside the timebox without reopening the frozen contract, and a partial version would weaken the bit-identical replay guarantee the project rests on.
+- **Why parked:** it cannot land inside the timebox without reopening every frozen interface before G4.
 
 ## D46 Ephemeral per-branch environments: parked *(James, 2026-10-13; QMC-129, #55)*
 

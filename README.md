@@ -235,7 +235,7 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 
 | Item | Status | Why |
 | --- | --- | --- |
-| Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox without weakening bit-identical replay |
+| Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox |
 | Ephemeral per-branch environments | **Parked** (D46) | The account's SCP denies creating OIDC providers, so CI would need a long-lived admin-level key in a public repo; per-environment alarms and metrics would exceed the free tier's 10 |
 | CI deploys | **Out** (D21) | Same credential problem; every apply runs from `main` by the integrator (D33) |
 | Step Functions watcher | Being added, **off by default** (D21, contract change 007) | *TBD when it lands* |
