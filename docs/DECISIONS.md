@@ -295,9 +295,12 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 ## D43 Budget alerts through SNS only *(James, 2026-10-13)*
 
 - **Chose:** the `qmc-monthly` Budget's notifications (actual > 1%, actual > 100%, forecast > 100%) publish **only** to the SNS topic `qmc-dev-alerts`, which emails James through its confirmed subscription. The direct email subscriber on the Budget is removed (WS1).
-- **Why:** in the new AWS experience, a Budget's direct email recipient goes through AWS User Notifications and must be verified there. James's AWS-managed sign-in cannot do that: it lacks the `notifications-contacts:*` permissions. The SNS path already delivers the same alerts. This is also why the topic is unencrypted (D17): Budgets cannot publish to a topic that uses the AWS-managed SNS key.
-- **Alternatives:** keep the direct email subscriber (it cannot be verified with this sign-in); grant the `notifications-contacts` permissions (IAM permissions for human access are managed by AWS in this experience).
-- *TBD: cite WS1's merge request and the apply.*
+- **Why:** in the new AWS experience, a Budget's direct email recipient goes through AWS User Notifications and must be verified there. In this account nobody can: the new-AWS-experience project SCP has a statement `DenyNotificationContactsOperations` that denies `notifications-contacts:*` ([SCPs and RCPs for projects](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html)). The SNS path already delivers the same alerts. This is also why the topic is unencrypted (D17): Budgets cannot publish to a topic that uses the AWS-managed SNS key.
+- **Alternatives:**
+  - Keep the direct email subscriber. It cannot be verified, so its emails would not arrive.
+  - Activate advanced features, which removes that SCP. That changes the account's managed guardrails, which is out of scope.
+- **Applied:** WS1's MR !24 was applied from `main` `8a289d8` at 13:43:24Z (3 changed; the plan afterwards showed no changes).
+- **Verified:** read-only Budgets calls (`DescribeNotificationsForBudget`, `DescribeSubscribersForNotification`) show that each of the three notifications on `qmc-monthly` has exactly one subscriber, of type SNS, on `qmc-dev-alerts`.
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
