@@ -255,6 +255,7 @@ The job holds no seed yet. The API retries in the background, and the job become
 - Up to 4 attempts at Qrypt, after waits of 2, 4, 6 and 6 s. `PENDING_BACKOFF_MS` is 2000,4000,8000, with the last value repeating, and each wait is capped so the attempt fits the API's 10 s timeout.
 - If our own 2 s limiter is busy (another submit or seeder holds the slot), the seeder waits for the slot plus 0–2 s of random jitter. That wait does not use up an attempt (MR !57).
 - The job gives up after 120 s. A GET after that fails a job whose retry was lost.
+- Known limit (contract change 008): a pending job whose retry was lost still counts toward the 10-job cap until a GET expires it, or until it drops out of the newest 50 jobs. Meanwhile new opt-in submits fail fast with the original error, so nothing is written for them.
 
 An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409.
 
