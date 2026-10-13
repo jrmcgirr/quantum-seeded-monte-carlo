@@ -1,6 +1,13 @@
 # CI (QMC-106). Mirrored job for job in .github/workflows/ci.yml (D19). No deploys from CI.
 stages: [lint, test, infra, security]
 
+# One pipeline per push: branch pipelines only (merge-request pipelines would duplicate them).
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+      when: never
+    - when: always
+
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
   PIP_DISABLE_PIP_VERSION_CHECK: "1"
@@ -79,6 +86,12 @@ tflint:
   extends: .has_infra
   stage: infra
   image: { name: "ghcr.io/terraform-linters/tflint:v0.64.0", entrypoint: [""] }
+  variables:
+    # Cached so --init does not hit GitHub's anonymous API limit (60/h per IP) on every run.
+    TFLINT_PLUGIN_DIR: "$CI_PROJECT_DIR/.tflint.d/plugins"
+  cache:
+    key: { files: [infra/.tflint.hcl] }
+    paths: [.tflint.d/]
   script:
     - tflint --chdir=infra --init
     - tflint --chdir=infra --recursive
