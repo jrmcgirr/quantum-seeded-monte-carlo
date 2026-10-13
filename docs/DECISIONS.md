@@ -110,11 +110,20 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** X-Ray active tracing (free under 100k traces, but its write actions need `Resource: "*"`).
 - **Why:** the no-wildcard IAM rule; logs and metrics cover the debugging need.
 
-## D19 GitLab primary with GitLab CI, mirrored to GitHub
+## D19 GitLab primary with GitLab CI; GitHub as a second remote pushed at gates *(changed 2026-10-13, HANDOFF 1.8)*
 
-- **Chose:** GitLab (labs.gauntletai.com) is the primary remote with GitLab CI; a push mirror keeps the GitHub repository (the one we submit) current. If no CI runner is available on labs.gauntletai.com, the same jobs run as GitHub Actions on the mirror. No deploys from CI. *(James)*
-- **Alternatives:** GitHub primary with Actions (the research default, matches the deliverable directly); GitLab primary with CI on GitHub.
-- **Why:** James's workflow and issue tracking live on GitLab (as on the telemetry project); the mirror satisfies the GitHub deliverable.
+- **Chose:**
+  - GitLab (labs.gauntletai.com) is the primary remote. GitLab CI runs on James's local Mac runner (docker executor, untagged jobs), so the `golden` job there is emulated amd64.
+  - **GitHub is a plain second remote, not a mirror.** The integrator pushes `main` and tags to it at every gate. It is the submitted repository, and its GitHub Actions workflow runs natively on x86 on each push.
+  - No deploys from CI. *(James)*
+- **Alternatives:**
+  - GitHub primary with Actions (the research default; matches the deliverable directly).
+  - A GitLab push mirror to GitHub (the original choice). It needs a GitHub token with workflow scope and can stop silently (old R20).
+  - GitLab CI on shared runners (none available on labs.gauntletai.com, old R18).
+- **Why:**
+  - James's workflow and issue tracking live on GitLab, as on the telemetry project.
+  - Manual pushes at the gates mean no mirror token to manage. A missed push is caught by the GitHub-vs-GitLab `main` sha check that the integrator runs at every gate and before submission (R20).
+  - The local runner resolves R18, and GitHub Actions adds a native-x86 CI run, which the emulated `golden` job cannot provide (D36).
 
 ## D20 Terraform versions, state and layout
 
@@ -211,7 +220,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Setting `NPY_DISABLE_CPU_FEATURES=X86_V3` drops `exp` to the `X86_V2` baseline, which shows the variable does take effect.
 - **Alternatives:** relying on the environment variable alone, which a typo would silently defeat; pinning the baseline with `X86_V3` disabled as well, which is slower and unnecessary while AVX2 is universal on Lambda x86.
 - **Evidence on Lambda (G1, 2026-10-13, build `c768aea`):** job `5358ec35af8a450d9eba939da9f610d9` recorded the worker fingerprint `numpy 2.5.4, glibc 2.34, exp_target X86_V3, dispatch_enforced true, avx512f false` (`docs/ai-log/WS2.md`). That host had no AVX-512, so this shows the pinned target with enforcement on, not the self-check refusing an AVX-512 host. No AVX-512 Lambda host has been seen yet; the refusal path is proven by unit tests (`tests/core/test_sim.py::test_self_check_raises_when_enforced`, `tests/worker/test_happy_path.py::test_init_self_check_raises_before_any_message`).
-- **Evidence in emulation:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job passed (7 tests) in [pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736) on `ea3820c`, but on James's Mac runner (`via Jamess-MacBook-Pro.local` in the job log), so it is also emulated amd64. **A native-x86 golden run is still pending.**
+- **Evidence in emulation:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job passed (7 tests) in [pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736) on `ea3820c`, but on James's Mac runner (`via Jamess-MacBook-Pro.local` in the job log), so it is also emulated amd64. **A native-x86 golden run is still pending;** it is expected from GitHub Actions once `main` is pushed to GitHub (D19).
 - **Bit-for-bit evidence on real Lambda hardware:** WS4's `make e2e` (build `c768aea`; job `edaff921…`, replay `d6afc058…`) replayed bit-identically: 10 shards, no diffs, `fingerprint_match: true`. The shards ran on two reported CPU models (`Intel(R) Xeon(R) Processor @ 2.50GHz` and `Intel(R) Xeon(R) Processor`), all with `exp_target X86_V3` and `dispatch_enforced true` (`docs/TEST_RESULTS.md`, QMC-142).
 
 ## D37 Grader invoke policy inline on the user *(first apply, HANDOFF 1.5)*
@@ -245,7 +254,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).
 - The worker's SIMD self-check enforces only when `QMC_ENFORCE_PINNED_DISPATCH=true` (Lambda and the golden CI job), so unit tests on AVX-512 CI runners still import the worker.
 - EMF and JSON logs are written to stdout, never through `logging` (the Lambda runtime's prefix stops EMF extraction).
-- The GitHub mirror token needs workflow permission; GitHub and GitLab `main` shas are compared at every gate.
+- The GitHub mirror token needs workflow permission; GitHub and GitLab `main` shas are compared at every gate. *(Superseded by D19's 2026-10-13 change: no mirror; the sha comparison stays.)*
 - The DLQ is warmed at least 15 minutes before a drill or recording (SQS metrics for an inactive queue can take up to 15 minutes); drill timeout 20 minutes.
 - All DynamoDB attribute names go through placeholders (reserved words); `mark_failed` returns the old item on refusal so the worker never needs `GetItem`; the API gets `BatchGetItem` for `GET /jobs`; an IAM allow-list test runs over every moto test.
 - Aggregation never divides by zero (N = 0 or 1); antithetic needs `paths ≥ 4`.
