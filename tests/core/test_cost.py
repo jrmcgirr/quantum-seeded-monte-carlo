@@ -42,3 +42,16 @@ def test_retryable_entropy_codes():
     assert ErrorCode.QRYPT_FORBIDDEN not in RETRYABLE_ENTROPY_CODES
     assert ErrorCode.SECRET_UNAVAILABLE not in RETRYABLE_ENTROPY_CODES
     assert ErrorCode.QRYPT_TIMEOUT in RETRYABLE_ENTROPY_CODES and len(RETRYABLE_ENTROPY_CODES) == 6
+
+
+def test_estimate_uses_billed_time_when_recorded():
+    """Contract change 009: invocation_ms + init_ms (billed) beat simulation-only duration_ms."""
+    job = {"status": "COMPLETE", "shards": 2}
+    cold = {"duration_ms": 60, "memory_mb": 1024, "invocation_ms": 400, "init_ms": 700}
+    warm = {"duration_ms": 2, "memory_mb": 1024, "invocation_ms": 30, "init_ms": 0}
+    got = cost.estimate(job, [cold, warm])
+    assert got["lambda_gb_seconds"] == pytest.approx(1.1 + 0.03 + cost.API_GB_S_PER_REQUEST)
+    legacy = {"duration_ms": 60, "memory_mb": 1024, "invocation_ms": 400}
+    assert cost.estimate(job, [legacy])["lambda_gb_seconds"] == pytest.approx(
+        0.4 + cost.API_GB_S_PER_REQUEST
+    )

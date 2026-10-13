@@ -2,8 +2,12 @@
 
 Formula (what tests check):
 
-- ``lambda_gb_seconds`` = Σ over shards ``duration_ms / 1000 × memory_mb / 1024``
-  + ``API_GB_S_PER_REQUEST`` × (1 + ``polls``)  (API: 512 MB × 0.25 s per request = 0.125 GB-s)
+- ``lambda_gb_seconds`` = Σ over shards ``billed_ms / 1000 × memory_mb / 1024``, where
+  ``billed_ms`` = ``invocation_ms + init_ms`` when the worker recorded them (contract change 009:
+  the handler's elapsed time plus cold-start init, which Lambda bills), else ``duration_ms``
+  (simulation only; older shards, a lower bound)
+  + ``API_GB_S_PER_REQUEST`` × (1 + ``polls``)  (API: 512 MB × 0.25 s per request = 0.125 GB-s, a flat warm-average estimate; a cold
+  submit bills more)
 - ``lambda_requests`` = 1 (submit) + shards + ``polls``
 - ``sqs_requests`` = ⌈shards / 10⌉ (SendMessageBatch) + shards (receive) + shards (delete)
 - ``dynamodb_write_units`` = 5 (limiter, entropy, job, JOBLIST, finalize) + 2 × shards (shard put,
@@ -31,6 +35,12 @@ DYNAMODB_USD_PER_WRITE = 0.625 / 1_000_000
 API_GB_S_PER_REQUEST = 0.5 * 0.25
 
 
+def _billed_ms(shard: Mapping) -> int:
+    if "invocation_ms" in shard:
+        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0))
+    return int(shard["duration_ms"])
+
+
 def estimate(job: Mapping, shards: Iterable[Mapping], polls: int = 0) -> dict | None:
     """``{"lambda_gb_seconds", "lambda_requests", "sqs_requests", "dynamodb_write_units",
     "usd_at_list_price", "usd_after_free_tier": 0.0}`` per the module formula; None unless the
@@ -38,9 +48,7 @@ def estimate(job: Mapping, shards: Iterable[Mapping], polls: int = 0) -> dict | 
     if job.get("status") not in ("COMPLETE", "PARTIAL"):
         return None
     n = int(job["shards"])
-    worker_gb_s = math.fsum(
-        int(s["duration_ms"]) / 1000 * int(s["memory_mb"]) / 1024 for s in shards
-    )
+    worker_gb_s = math.fsum(_billed_ms(s) / 1000 * int(s["memory_mb"]) / 1024 for s in shards)
     gb_s = worker_gb_s + API_GB_S_PER_REQUEST * (1 + polls)
     requests = 1 + n + polls
     sqs = math.ceil(n / 10) + 2 * n

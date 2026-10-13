@@ -283,9 +283,18 @@ def shard_put(
     attempt: int,
     fingerprint: Mapping,
     now_epoch: float,
+    invocation_ms: int | None = None,
+    init_ms: int | None = None,
 ) -> dict:
     """``put_item`` of the shard item (sums as hex), condition ``attribute_not_exists(pk)``.
-    A conditional failure is a duplicate delivery, not an error."""
+    A conditional failure is a duplicate delivery, not an error. ``invocation_ms`` (handler
+    elapsed time up to this put) and ``init_ms`` (cold-start init, first record of an execution
+    environment only, else 0) feed ``cost.estimate`` (contract change 009)."""
+    extra = {
+        k: int(v)
+        for k, v in (("invocation_ms", invocation_ms), ("init_ms", init_ms))
+        if v is not None
+    }
     return {
         "Item": {
             **shard_key(job_id, shard_index),
@@ -299,6 +308,7 @@ def shard_put(
             "fingerprint": dict(fingerprint),
             "completed_at": iso_ms(now_epoch),
             "ttl": _ttl(now_epoch),
+            **extra,
         },
         "ConditionExpression": "attribute_not_exists(#pk)",
         "ExpressionAttributeNames": {"#pk": "pk"},
