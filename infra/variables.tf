@@ -158,6 +158,12 @@ variable "enable_fault_injection" {
   default     = false
 }
 
+variable "enable_step_functions" {
+  description = "Create the optional Step Functions watcher (contract change 007). Off by default: it is free only up to the 4,000 always-free state transitions a month (about 700 jobs)."
+  type        = bool
+  default     = false
+}
+
 variable "create_budget" {
   description = "Create the account-wide $1 monthly Budget. Only one environment per account should."
   type        = bool

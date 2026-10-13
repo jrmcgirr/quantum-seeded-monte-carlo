@@ -50,3 +50,8 @@ output "log_groups" {
     worker = module.workers.log_group_name
   }
 }
+
+output "state_machine_arn" {
+  description = "Step Functions watcher ARN (null unless enable_step_functions)."
+  value       = module.api.state_machine_arn
+}
