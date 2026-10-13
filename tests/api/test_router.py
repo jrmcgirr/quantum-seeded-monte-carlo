@@ -122,3 +122,31 @@ def test_health_503_names_failing_check(api, monkeypatch):
 def test_request_headers_never_logged(api, capsys):
     api.call("GET", "/jobs")
     assert "SECRET-HEADER" not in capsys.readouterr().out
+
+
+def test_root_path_is_route_not_found(api):
+    assert api.call("GET", "/")[2]["error"]["code"] == "ROUTE_NOT_FOUND"
+
+
+def test_health_503_names_a_dynamodb_failure(api, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    from qmc_api import aws
+
+    class Broken:
+        def get_item(self, **kw):
+            raise ClientError({"Error": {"Code": "ResourceNotFoundException"}}, "GetItem")
+
+    monkeypatch.setattr(aws, "table", lambda: Broken())
+    status, _, body = api.call("GET", "/health")
+    assert status == 503
+    assert body["checks"] == {"dynamodb": "error: ClientError", "ssm": "ok"}
+
+
+def test_unserializable_response_is_500_not_a_raise(api, monkeypatch):
+    from qmc_api import handler
+
+    monkeypatch.setitem(handler.ROUTES[3][1], "GET", lambda e, c: (200, {"x": object()}))
+    status, _, body = api.call("GET", "/health")
+    assert (status, body["error"]["code"]) == (500, "INTERNAL_ERROR")
+    assert "req-test-0001" in body["error"]["message"]

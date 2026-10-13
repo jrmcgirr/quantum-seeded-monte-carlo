@@ -65,8 +65,6 @@ def route(event, context) -> tuple[int, dict]:
 def _json_default(o):
     if isinstance(o, Decimal):  # DynamoDB numbers; every stored number is an integer
         return int(o) if o == o.to_integral_value() else str(o)
-    if isinstance(o, set | frozenset):
-        return sorted(o)
     raise TypeError(f"not JSON serializable: {type(o).__name__}")
 
 
