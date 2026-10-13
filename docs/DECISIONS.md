@@ -70,7 +70,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   3. **Cap 1 per 1 s** (contract change 005), the current choice. Burst at 13:13:37Z (build `6dcb3c2`): 1 × 202, 38 × 429 `ENTROPY_RATE_LIMITED` (`Retry-After: 1`), and 1 × 503 `QRYPT_RATE_LIMITED`. The limiter gave one slot in each of two consecutive windows. Qrypt refused the second call, which started 1.19 s after the first, so Qrypt's limit behaves like a sliding window or a minimum spacing rather than one call per aligned second. 
 - **Decision after that burst (James, HANDOFF 1.12, R24):** keep the 1 s window with cap 1, and document the boundary case. Qrypt appears to enforce roughly one call per ~1.2 s as a sliding limit. A call that lands just after a window boundary can therefore still get a Qrypt 429, and it fails closed as 503 `QRYPT_RATE_LIMITED` (I1 holds, nothing written). The assignment's 30 per 10 s is met by a wide margin (measured max 2 in that run).
 - **Fallback, if it recurs in normal use:** a **2 s minimum gap** between calls, as contract change 006. One `RL#qrypt/LAST` item is updated with a conditional `SET at = now` that succeeds only if `at <= now - 2 s`, which allows ≤ 5 calls per rolling 10 s.
-- **Rejected for now:** switching to the minimum gap straight away. It halves throughput and adds a contract change on G2 day, for an edge case that already fails closed.
+- **Not chosen for now:** switching to the 2 s gap straight away. The boundary case already fails closed, and the assignment's limit is met.
 - **Alternatives:**
   - Keep 10 per 10 s and document it. Bursts then become mostly Qrypt 503s and trip `SeedingFailures`.
   - 1 per 10 s. Far below Qrypt's limit, and the benchmarks would take minutes.
