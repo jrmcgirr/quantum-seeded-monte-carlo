@@ -52,6 +52,9 @@ golden:
   image:
     name: public.ecr.aws/lambda/python:3.13
     entrypoint: [""]
+    # x86_64 even on an Apple-silicon runner (Rosetta/QEMU): the golden hash is an x86_64 result.
+    docker:
+      platform: linux/amd64
   variables:
     QMC_ENFORCE_PINNED_DISPATCH: "true"
     PYTHONDONTWRITEBYTECODE: "1"
