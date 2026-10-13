@@ -70,7 +70,7 @@ job 734b76da (measured):  13:21:44.407Z 429 attempt 1 (1.486 s after the previou
 
 ## After contract change 006 (2 s minimum gap), build e77a626
 
-A 3-submit steady spot check, paced 2.5 s: 3/3 accepted; client 286, 284, 298 ms; Lambda Duration p50 142 ms. Qrypt calls were 2.49–3.03 s apart and all got 200, with no 429. Details are in `docs/TEST_RESULTS.md`. Expect warm p95 to stay within the run above: the gap changes only how often a submit is admitted, not how long it takes.
+A 3-submit steady spot check, paced 2.5 s: 3/3 accepted; client 286, 284, 298 ms; Lambda Duration p50 142 ms. Qrypt calls were 2.49–3.03 s apart and all got 200, with no 429. Details are in `docs/TEST_RESULTS.md`. The 50-submit p50/p95 above was measured under 005 and was not re-run under 006.
 
 ## Qrypt spent
 58 submits; 56 blocks delivered: **56 KiB**. WS4 total: 81 KiB (`docs/TEST_RESULTS.md`).
