@@ -90,7 +90,7 @@ sequenceDiagram
     participant M as SQS shards
     C->>A: POST /jobs (SigV4)
     A->>A: validate (400 on any rule, nothing written)
-    A->>D: limiter slot (429 if the window is full)
+    A->>D: Qrypt gap slot RL qrypt LAST (429 if under 2 s since the last call)
     A->>S: GetParameter token (cached)
     A->>Q: GET quantum-entropy size=1
     alt Qrypt or secret failure
