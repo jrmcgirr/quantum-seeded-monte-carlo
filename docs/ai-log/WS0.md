@@ -65,3 +65,57 @@
   - GitLab has no runner. Pipeline #52654 is stuck in pending.
   - No GitHub push mirror is configured (`remote_mirrors` is empty), so neither CI system has run. CI green is not yet proven; the golden constants from emulation are provisional until an x86 CI run.
   - Contract change 002 is still proposed.
+
+## 2026-10-13 06:05–14:50 CT (integrator)
+
+- **Workstream:** WS0, integrator (QMC-109, QMC-099 follow-ups, stretch QMC-108/119/126/127/128/129)
+- **Tool and model:** Claude Code, Claude Opus 5.5 (`claude-opus-5-5`); four research subagents for the stretch scoping
+- **Asked:**
+  - Integrate and apply from `main`.
+  - Set up the GitLab runner and the GitHub remote, then a staging flow, then protected `main` instead.
+  - Optimise CI.
+  - Scope, research, decide and ticket the stretch goals.
+  - Run the drift check.
+- **Produced:**
+  - **Merges and applies:** MRs !1–!60 reviewed and merged; every apply from `main`, each with a re-plan showing no changes.
+  - **Contract changes:**
+    - 002 (concurrency 110)
+    - 003 (Qrypt 403 → `QRYPT_FORBIDDEN`)
+    - 004–006 (Qrypt limiter: cap 10 → 1/s window → 2 s minimum gap)
+    - 007 (optional Step Functions watcher)
+    - 008 (opt-in PENDING_ENTROPY, with slot waits)
+    - 009 (billed duration and the calibrated cost overhead)
+  - **HANDOFF:** 1.5 → 1.18.
+  - **`qmc_core` additions:**
+    - antithetic simulation
+    - `cost.estimate`
+    - PENDING builders and the gap limiter
+    - all at 100% line and branch coverage
+  - **CI:**
+    - golden job pinned to linux/amd64
+    - tflint cache
+    - merge-request-only pipelines
+    - parallel jobs
+    - Checkov blocking
+  - **GitLab:** 50 issues and milestones; 6 stretch tickets.
+  - **Tags:** `g3-proven` (2fbd97e).
+- **Checks run:**
+  - `make test` before each merge; Terraform plans checked against WS1's predictions.
+  - The drift check, finished by hand after the SCP-blocked destroy (R25): no orphans, apply from empty 65 s, `e2e --fresh` 12/12, plan 0.
+  - A Qrypt probe with a fake token (no quota) showed 403 `Forbidden or entropy quota reached`.
+  - Logs Insights over `qrypt_call` lines showed 26 × 200 and 0 × 429 at 12:01Z.
+  - The Budget subscribers verified read-only.
+- **Human checked or changed:**
+  - **Approvals:** James approved every merge to `main` and every apply.
+  - **Runner and repo:** James created the GitLab runner (I fixed its local config: `run_untagged`, `image`, the Docker socket) and made the GitHub repo public.
+  - **Choices James made:**
+    - GitHub as a plain remote (D19)
+    - dropped staging for protected `main` (D42)
+    - contract changes 002–006 and 009, including the 2 s gap
+    - the stretch build list and the PENDING slot-wait fix
+  - **Account steps:** James stored the Qrypt token, confirmed SNS twice, and took the Budget and DLQ-email screenshots.
+- **My mistakes, caught and fixed:**
+  - Merged WS1's !3 without running `ruff format` (main went red; WS1 fixed it in !4).
+  - A combined `git push` refspec silently skipped `main` (caught by a sha check).
+  - The first cost formula under-reported compute about 5× (WS4's drill; fixed by 009).
+  - The 1 s limiter window still let Qrypt 429s through at window boundaries (WS4's burst; 006).
