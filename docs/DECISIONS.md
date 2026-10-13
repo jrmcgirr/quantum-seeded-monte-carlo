@@ -212,6 +212,18 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** relying on the environment variable alone, which a typo would silently defeat; pinning the baseline with `X86_V3` disabled as well, which is slower and unnecessary while AVX2 is universal on Lambda x86.
 - **Evidence:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative but **has not run yet**: GitLab has no runner and the GitHub mirror is not set up (Day 0 step 0.6). *(WS5: cite the run link from WS0 when it exists.)*
 
+## D37 Grader invoke policy inline on the user *(first apply, HANDOFF 1.5)*
+
+- **Chose:** the grader user `qmc-<env>-grader` gets its invoke policy as an **inline user policy**, not through an IAM group. Checkov `CKV_AWS_40` ("IAM policies attached only to groups or roles") is skipped with this reason.
+- **Why:** the new-AWS-experience Paid-plan SCP `DenyIAMRestrictedActions` denies `iam:CreateGroup`, `iam:PutGroupPolicy` and `iam:AddUserToGroup`, as found at WS1's first apply. `iam:CreateUser`, `iam:PutUserPolicy` and `iam:CreateAccessKey` are still allowed, so D26 is unchanged.
+- **Alternatives:** a group (denied by the SCP); a managed policy attached to the user (Checkov flags it the same way, and it adds a resource); dropping the user and having graders assume the `qmc-<env>-client` role (that needs a principal in the grader's own account, which we cannot rely on).
+
+## D38 Worker runtime pinned with `aws_lambda_runtime_management_config` *(first apply, HANDOFF 1.5)*
+
+- **Chose:** a separate `aws_lambda_runtime_management_config` resource sets `update_runtime_on = "FunctionUpdate"` on the worker.
+- **Why:** AWS provider 6.68 has no `runtime_management_config` block on `aws_lambda_function`, so HANDOFF §8.2's original form does not exist. The pin is still needed so AWS cannot change glibc (and so `exp`) under a deployed worker during grading (§7.9, I5).
+- **Alternatives:** leaving runtime updates on `Auto` (a mid-grading runtime update could break replay); setting it by CLI (drift, banned).
+
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).

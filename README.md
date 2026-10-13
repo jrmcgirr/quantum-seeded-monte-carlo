@@ -39,6 +39,7 @@ Every AWS resource, the submit and replay sequences, and the fail-closed branch:
 
 - An AWS account and CLI v2 credentials with admin rights in **us-east-2** (*TBD: note for other Regions*).
 - Terraform ≥ 1.10, Python 3.13, [uv](https://docs.astral.sh/uv/), `make`. Docker is optional (only for `make test-golden`).
+- If you sign in with `aws login`, Python tools need `botocore[crt]` to read those credentials; `make setup` installs it.
 - A Qrypt **Entropy** token from [portal.qrypt.com](https://portal.qrypt.com).
 
 ### 1. Configure AWS credentials

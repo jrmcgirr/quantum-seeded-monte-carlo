@@ -12,7 +12,7 @@
 
 ## Function URL auth and the grader user
 
-*TBD*
+*TBD.* The grader user's invoke policy is inline on the user, because the Paid-plan SCP `DenyIAMRestrictedActions` denies IAM groups (D37, HANDOFF 1.5 §8.2).
 
 ## Encryption
 
@@ -29,3 +29,7 @@
 ## Checkov suppressions
 
 *TBD: each suppression with its reason (from WS1).*
+
+| Check | Resource | Reason |
+| --- | --- | --- |
+| `CKV_AWS_40` | grader user's inline policy | Groups are denied by the account's SCP (D37) |

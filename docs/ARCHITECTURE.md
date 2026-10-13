@@ -10,7 +10,7 @@ All resources are in **us-east-2** and named `qmc-<env>` (`env` = `dev`), except
 flowchart LR
     subgraph clients["Callers"]
         CLI["clients/qmc.py or curl (SigV4)"]
-        GU["IAM user qmc-env-grader"]
+        GU["IAM user qmc-env-grader (inline invoke policy, D37)"]
         CR["IAM role qmc-env-client"]
     end
 
@@ -38,6 +38,7 @@ flowchart LR
         WF["Lambda qmc-env-worker (python3.13, x86_64, 1,024 MB, NumPy 2.5.4, exp on X86_V3)"]
         WR["IAM role + policy: worker"]
         WL["Log group /aws/lambda/qmc-env-worker (14 d)"]
+        RMC["Runtime management config: FunctionUpdate (D38)"]
     end
 
     subgraph obs["module observability + budget"]
@@ -62,6 +63,7 @@ flowchart LR
     QP -.- DLQ
     SQ --> ESM --> WF
     WR -.- WF
+    RMC -.- WF
     WF -- "shard put, done set, finalize" --> DDB
     WF -- "stdout JSON + EMF" --> WL
     SQ -- "after 3 receives" --> DLQ
