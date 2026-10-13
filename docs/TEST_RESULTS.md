@@ -186,6 +186,12 @@ FAIL  QryptLatencyMs SampleCount = qrypt_call lines  20 (after 0 s)
 - The one FAIL was a tool bug, not a system fault. The SampleCount query started 60 s before the burst, so it also counted the 5 calls from an aborted first attempt (below), giving 20 against 15. The tool now compares the metric and the log lines over the same whole-minute buckets. Re-checked on the same data with no new submits: `burst minute 12:01: (20, 20)`.
 - Aborted first attempt at 12:01:11Z: the 40 threads raced 40 concurrent `make outputs` (`terraform init`), and the tool crashed after 5 submits had gone through (5 × Qrypt 200, 5 KiB). Fixed in `tools/_common.py` (thread-safe `outputs()`). Those 5 calls also showed the real token still had quota after the 403 finding.
 
+### Qrypt's own rate limit, and contract change 004
+
+The Qrypt trial key is rated at 1 call/s, so contract change 004 (HANDOFF 1.10, main d9273f5) lowers `QRYPT_MAX_PER_WINDOW` from 15 to 10. The burst above ran at cap 15; it is re-run at cap 10 once 004 is applied (below).
+
+Observed today: every `qrypt_call` line in `/aws/lambda/qmc-dev-api` since 00:00 UTC (`FilterLogEvents`, `{ $.event = "qrypt_call" }`, counted by WS4) totals **29 calls: 26 × 200, 3 × 403** (the decoy drills), **0 × 429**. At most **8 calls with status 200 fell in one second**, at 12:01:54Z, during the burst. WS0's Logs Insights query found the same. Qrypt did not enforce 1/s, so the lower cap is a precaution.
+
 ## Fail-closed drill re-run after contract change 003, build_sha 855e8d6, 2026-10-13 12:08Z
 
 Same sequence as below:
