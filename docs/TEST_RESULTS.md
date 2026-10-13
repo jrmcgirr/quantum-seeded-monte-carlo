@@ -29,6 +29,29 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 
 All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `terraform`, `golden`, `unit`. The `unit` job log shows `320 passed, 25 deselected`, `Required test coverage of 80% reached. Total coverage: 96.20%`, then a qmc_core-only run with `207 passed`, `Required test coverage of 90% reached. Total coverage: 100.00%`.
 
+## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
+
+Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
+
+| package | statements | covered | branches | covered | coverage |
+| --- | --- | --- | --- | --- | --- |
+| qmc_api | 431 | 408 | 86 | 70 | 92.46% |
+| qmc_core | 695 | 695 | 160 | 160 | 100.00% |
+| qmc_worker | 135 | 125 | 30 | 21 | 88.48% |
+| **total** | 1,261 | 1,228 | 276 | 251 | **96.23%** |
+
+Gates (HANDOFF §11): total ≥ 80% PASS, qmc_core ≥ 90% PASS. No per-package gate exists for the handlers. Files below 90%, for their owners (sent to WS0 for WS2 and WS3; not WS4's files):
+- `qmc_worker/handler.py` 88.5%, uncovered:
+  - **118–119: the `algo_version` mismatch rejection.** This is I5-relevant: a message for another simulation version must not be computed under the current one.
+  - non-conditional DynamoDB errors re-raised (149–150, 157–158, 184–185, 213–214);
+  - the job item gone mid-finalize (189–190, 217–218);
+  - shard-query pagination (232–234, needs > 1 MB of shards);
+  - the failure path itself failing (87–89).
+- `qmc_api/handler.py` 84.7%, uncovered:
+  - DynamoDB error in `/health` (26–27);
+  - JSON default for sets and unserialisable values (68–70);
+  - the response-encoding failure → 500 (93–96).
+
 ## Unit and integration (`make test`)
 
 On `ws4-verify` rebased on `main` 974f229 (WS2 and WS3 merged): `319 passed, 25 deselected`. Before that merge, ws4-verify merged with `origin/ws2-api` and `origin/ws3-worker` in a throwaway worktree gave `tests/integration`: `13 passed`.
