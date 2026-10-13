@@ -102,11 +102,18 @@ def cold_starts(days: float) -> None:
 
 
 def cold_once() -> None:
-    t0 = time.monotonic()
-    status, _, _ = call("POST", "/jobs", SMALL)
+    """One submit after ≥ 15 min idle; its own REPORT line shows whether it was a cold start."""
+    api_url()  # resolve before timing
+    t_wall, t0 = time.time(), time.monotonic()
+    status, headers, _ = call("POST", "/jobs", SMALL)
+    ms = (time.monotonic() - t0) * 1000
+    rid = next((v for h, v in headers.items() if h.lower() == "x-request-id"), None)
+    time.sleep(15)  # REPORT lines reach CloudWatch Logs within seconds
+    dur, init = reports("api", t_wall - 5).get(rid, (None, None))
     print(
-        f"\n## First request after idle: POST /jobs {status} in {(time.monotonic() - t0) * 1000:.0f} ms "
-        "(client); its Init Duration appears in the cold-start table"
+        f"\n## First request after idle\n\nPOST /jobs {status}: client {ms:.0f} ms; "
+        f"REPORT Duration {dur} ms, Init Duration {init} ms (request {rid}). "
+        f"{'Cold start confirmed.' if init else 'NOT a cold start: an execution environment was still warm.'}"
     )
 
 
