@@ -2,7 +2,7 @@
 
 - **Requested by:** WS4 (burst finding), 2026-10-13 12:56 CT; accepted by James
 - **Status:** accepted 2026-10-13; WS0 part on `ws0-foundation`, merged together with WS2 and WS1
-- **Affects:** WS0 (`qmc_core.ddb`, `tests/core`, HANDOFF D10, §4.1, §7.5, §8.4, §8.6, §11, R24), WS1 (`qrypt_window_s` variable, `QRYPT_WINDOW_S` env, `qrypt_max_per_window` default 1), WS2 (`submit.py` reads `QRYPT_WINDOW_S`; `aws.py` defaults; tests), WS4 (burst expectations, bench pacing ≥ 1.1 s), WS5 (D10, README)
+- **Affects:** WS0 (`qmc_core.ddb`, `tests/core`, HANDOFF D10, §4.1, §7.5, §8.4, §8.6, §11, R24), WS1 (`qrypt_window_s` variable, `QRYPT_WINDOW_S` env, `qrypt_max_per_window` default 1), WS2 (`submit.py` reads `QRYPT_WINDOW_S`; `aws.py` defaults; tests), WS4 (burst expectations, bench pacing ≥ 1.5 s), WS5 (D10, README)
 
 ## Need
 
@@ -13,7 +13,7 @@ After contract change 004 (cap 10 per 10 s), the burst at 12:55:43Z let 10 calls
 - `ddb.LIMITER_WINDOW_S` = 1 (was 10). `ddb.limiter_take(window, cap, now, size_s=LIMITER_WINDOW_S)` (TTL uses `size_s`); `ddb.limiter_window(now, size_s)` unchanged in form.
 - New env var `QRYPT_WINDOW_S` (API, default 1; Terraform `qrypt_window_s`, validated 1–10). `QRYPT_MAX_PER_WINDOW` default 1.
 - The API passes `QRYPT_WINDOW_S` to both functions and to `Retry-After` (`max(1, ceil(window + size_s - now))`).
-- Burst: about 1 accepted per second, the rest 429 `ENTROPY_RATE_LIMITED` with `Retry-After: 1`, no Qrypt 429. Bench pacing ≥ 1.1 s.
+- Burst: about 1 accepted per second, the rest 429 `ENTROPY_RATE_LIMITED` with `Retry-After: 1`, no Qrypt 429. Bench pacing ≥ 1.5 s.
 
 ## Alternatives considered
 
@@ -22,4 +22,4 @@ After contract change 004 (cap 10 per 10 s), the burst at 12:55:43Z let 10 calls
 
 ## Impact on invariants
 
-None. I1 holds (still fail closed). Any rolling 10 s sees ≤ 10 Qrypt calls (the assignment allows 30).
+None. I1 holds (still fail closed). Any rolling 10 s sees ≤ 11 Qrypt calls (it can touch 11 aligned 1 s windows) (the assignment allows 30).
