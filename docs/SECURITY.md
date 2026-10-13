@@ -1,6 +1,6 @@
 # Security
 
-Checked against `infra/` on `main` `855e8d6`, the deployed API Lambda's configuration, and the live drills in [TEST_RESULTS.md](TEST_RESULTS.md). *TBD* marks what is still to be verified before G4.
+Checked against `infra/` on `main` `581563d`, which is unchanged through the G3 tag `g3-proven` (`2fbd97e`), the deployed functions' configuration, and the live drills in [TEST_RESULTS.md](TEST_RESULTS.md).
 
 ## The Qrypt token's path
 
@@ -13,7 +13,8 @@ Checked against `infra/` on `main` `855e8d6`, the deployed API Lambda's configur
 **If the token fails, nothing is written (I1).** This holds even for a submit that opts into `on_entropy_failure: "queue"` (contract change 008): `QRYPT_AUTH_FAILED`, `QRYPT_FORBIDDEN`, `QRYPT_BAD_RESPONSE`, `QRYPT_BAD_REQUEST` and `SECRET_UNAVAILABLE` always fail fast. Only rate limits, Qrypt 5xx, timeouts and network errors can park a job as `PENDING_ENTROPY`, and that record holds no seed. Two live checks, both in TEST_RESULTS:
 
 - **Secret failure** (parameter missing): 503 `SECRET_UNAVAILABLE`, no job written.
-- **Decoy-token drill** (a wrong token stored under `/qmc/qrypt-api-key-invalid`, build `d0af0b1`): 503, no job written, and the `qmc-dev-seeding-failures` alarm went to ALARM. This drill ran before contract change 003, so it reported `QRYPT_QUOTA_EXHAUSTED`; the current code reports a Qrypt 403 as `QRYPT_FORBIDDEN` (D41). - **Re-run on build `855e8d6`** (integrator, 2026-10-13): a submit at 12:08:39Z under the decoy token returned 503 `QRYPT_FORBIDDEN`, "Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up.", and wrote no job. *TBD: cite WS4's full evidence in TEST_RESULTS.*
+- **Decoy-token drill** (a wrong token stored under `/qmc/qrypt-api-key-invalid`, build `d0af0b1`): 503, no job written, and the `qmc-dev-seeding-failures` alarm went to ALARM. This drill ran before contract change 003, so it reported `QRYPT_QUOTA_EXHAUSTED`; the current code reports a Qrypt 403 as `QRYPT_FORBIDDEN` (D41).
+- **Re-run on build `855e8d6`** (integrator, 2026-10-13): a submit at 12:08:39Z under the decoy token returned 503 `QRYPT_FORBIDDEN`, "Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up.", and wrote no job. The test asserts that `GET /jobs` is unchanged, and the `qmc-dev-seeding-failures` alarm went OK → ALARM at 12:09:32Z and notified SNS ([TEST_RESULTS.md](TEST_RESULTS.md), "Fail-closed drill re-run after contract change 003").
 
 ## IAM, one role per function
 
@@ -79,7 +80,11 @@ Both Lambda trust policies require `aws:SourceAccount` to be this account. The w
 - The block is not stored. Only its SHA-256 is kept, which lets the API refuse a block it has already used.
 - Log groups keep 14 days.
 
-*TBD (WS4): a scan of both log groups for `Bearer`, `authorization`, `api_key` and `token` and for the decoy token's marker, finding nothing. The scan deliberately does not search for the real token's prefix, because that would mean reading the secret.*
+**Log scan** (WS4, `tools/log_scan.py`, 2026-10-13 about 12:10Z, after both fail-closed drills; [TEST_RESULTS.md](TEST_RESULTS.md), "Secret-leak scan of the logs"):
+- It read all 1,733 events since 00:00 UTC in `/aws/lambda/qmc-dev-api` and `/aws/lambda/qmc-dev-worker`. It printed counts only, never text.
+- **0 matches** for `Bearer`, `authorization` (any case), `api_key`, `"token"` and the decoy marker `NOT-A-REAL-TOKEN`, which the API held in memory during both drills.
+- A control pattern (`qrypt_call`, 29 matches in the API group) proves the scan read log text.
+- It deliberately does not search for the real token's prefix, because that would mean reading the secret.
 
 ## Fault injection on the graded stack
 

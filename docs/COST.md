@@ -23,7 +23,7 @@ This matters because, since 15 July 2025, a new account on the **Free plan** run
 | Alarms | 7 metric alarms (all in the Region) | `DescribeAlarms` |
 | DynamoDB | `PROVISIONED` 10 RCU / 10 WCU, no GSI, AWS-owned key | `DescribeTable` |
 
-The idle-polling rate of about 940 per hour matches the design estimate: 5 pollers, each with a 20 s long poll, is 15 receives a minute, about 900 an hour. The queue has been up only a few hours. *TBD: re-measure `NumberOfEmptyReceives` over a full idle 24 h (R7).*
+The idle-polling rate of about 940 per hour matches the design estimate: 5 pollers, each with a 20 s long poll, is 15 receives a minute, about 900 an hour. The stack was re-created from empty at 15:33Z by WS4's drift check (`CreationDateTime` of the table). Since then, every full hour has had **899–907** empty receives (16:24–20:24Z; `GetMetricStatistics`, hourly sums, read at 20:24Z), in line with the 909–938 measured earlier. *TBD: one full idle 24 h (R7) is not possible before G4; the monthly figure below uses the highest hour measured, 938.*
 
 ## Free-tier arithmetic at 100 jobs a day of 1M paths
 
@@ -47,7 +47,7 @@ The idle-polling rate of about 940 per hour matches the design estimate: 5 polle
 | Lambda compute, worst case (every call cold, max init + max duration) | worker 33,000 × 1 GB × (0.843 + 0.626) s ≈ 48,500; API 44,940 × 0.5 GB × (0.520 + 1.414) s ≈ 43,500; **≈ 92,000 GB-s** | 400,000 GB-s | 23% | same; init is billed as duration |
 | SQS requests | idle polling 938 × 730 h ≈ 684,700; receives ≈ 33,000; deletes ≈ 33,000; `SendMessageBatch` 3,300; **≈ 754,000** | 1,000,000 | **75%** (the binding limit) | [SQS pricing](https://aws.amazon.com/sqs/pricing/) |
 | DynamoDB capacity | provisioned 10 RCU + 10 WCU (no autoscaling, no GSI) | 25 RCU + 25 WCU per Region, provisioned only | 40% of capacity, whatever the request count | [DynamoDB pricing](https://aws.amazon.com/dynamodb/pricing/provisioned/) |
-| DynamoDB storage | *TBD: `TableSizeBytes` once DynamoDB refreshes it (about every 6 h)* | 25 GB | | same |
+| DynamoDB storage | measured **68,540 B** for 164 items, about 418 B an item (`DescribeTable`, 2026-10-13 20:24Z, after every drill since 15:33Z). Upper bound: 20 items per job × 3,300 jobs a month × 12 months (TTL 365 days) × 418 B ≈ **331 MB** | 25 GB | ≤ 1.3% | same |
 | KMS requests (`aws/ssm` decrypts) | ≤ one per submit, so ≤ 3,300. The token is cached 300 s, `/health` reads the parameter without decryption, and SSE-SQS and the AWS-owned DynamoDB key make no KMS calls | 20,000 | ≤ 17% | [KMS pricing](https://aws.amazon.com/kms/pricing/) |
 | CloudWatch custom metrics | 8 | 10 | 80% | [CloudWatch pricing](https://aws.amazon.com/cloudwatch/pricing/) |
 | CloudWatch alarms (standard resolution) | 7 | 10 | 70% | same |
@@ -124,7 +124,7 @@ Nothing is billed per hour: no NAT, load balancer, EC2, RDS or API Gateway. Prov
 | Qrypt limiter (one call per 2 s, D10) | Protects the external quota |
 | $1 monthly Budget with an alert at the first cent | Backstop: any spend at all sends an email |
 
-**One known non-free call:** CloudWatch's free API requests do not cover `GetMetricData` or `GetMetricWidgetImage`, which are billed per metric requested. Rendering the dashboard images (`docs/images/render_dashboard.py`) made 16 `GetMetricWidgetImage` calls covering about 30 metrics, about $0.0006 at list price. The measurements in this note used `GetMetricStatistics`, which is covered. The Budget itself reported month-to-date actual spend of **$0.0** (`DescribeBudget` `CalculatedSpend.ActualSpend`, 2026-10-13 after 13:43Z). *TBD: re-check before submission.*
+**One known non-free call:** CloudWatch's free API requests do not cover `GetMetricData` or `GetMetricWidgetImage`, which are billed per metric requested. Rendering the dashboard images (`docs/images/render_dashboard.py`) made 16 `GetMetricWidgetImage` calls covering about 30 metrics, about $0.0006 at list price. The measurements in this note used `GetMetricStatistics`, which is covered. The Budget itself reported month-to-date actual spend of **$0.0** (`DescribeBudget` `CalculatedSpend.ActualSpend`, 2026-10-13 after 13:43Z, and again at 20:24Z after every G3 drill). *TBD: one last check at submission.*
 
 ## Budget configuration
 
