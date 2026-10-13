@@ -12,7 +12,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
 | Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
-| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run **pending** |
+| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run 12:08 PASS (855e8d6): 503 QRYPT_FORBIDDEN, alarm OK→ALARM 12:09:32Z, SNS OK |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
@@ -186,6 +186,45 @@ FAIL  QryptLatencyMs SampleCount = qrypt_call lines  20 (after 0 s)
 - The one FAIL was a tool bug, not a system fault. The SampleCount query started 60 s before the burst, so it also counted the 5 calls from an aborted first attempt (below), giving 20 against 15. The tool now compares the metric and the log lines over the same whole-minute buckets. Re-checked on the same data with no new submits: `burst minute 12:01: (20, 20)`.
 - Aborted first attempt at 12:01:11Z: the 40 threads raced 40 concurrent `make outputs` (`terraform init`), and the tool crashed after 5 submits had gone through (5 × Qrypt 200, 5 KiB). Fixed in `tools/_common.py` (thread-safe `outputs()`). Those 5 calls also showed the real token still had quota after the 403 finding.
 
+## Fail-closed drill re-run after contract change 003, build_sha 855e8d6, 2026-10-13 12:08Z
+
+Same sequence as below:
+1. Decoy re-created at 12:07:50Z, once `qmc-dev-seeding-failures` was OK (since 12:07:32Z).
+2. The integrator applied the decoy config from 855e8d6 at 12:08:28Z. Only `module.api.aws_iam_role_policy.api` and `module.api.aws_lambda_function.api` changed; the worker was untouched, because replay ×20 was running.
+3. The drill ran; the integrator reverted at 12:09:10Z (plan = 0). WS4 checked that `QRYPT_API_KEY_PARAM` was `/qmc/qrypt-api-key`, then deleted the decoy; only `/qmc/qrypt-api-key` remains under `/qmc/`.
+
+Qrypt: 0 KiB.
+
+```
+$ QMC_DRILL=fail-closed uv run pytest -m deployed tests/deployed/test_edge_cases.py::test_fail_closed_bad_token -s
+submit with the decoy token → 503 {'error': {'code': 'QRYPT_FORBIDDEN', 'message': 'Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up.'}} at 12:08:39Z
+1 passed in 4.03s
+```
+
+```
+{"ts":"2026-10-13T12:08:39.616Z","event":"qrypt_call","job_id":"e7c7c4ce…","http_status":403,"latency_ms":186,"attempt":1,"outcome":"QRYPT_FORBIDDEN"}
+{"ts":"2026-10-13T12:08:39.616Z","level":"ERROR","event":"seeding_failed","job_id":"e7c7c4ce…","cause":"QRYPT_FORBIDDEN"}
+qmc-dev-seeding-failures: 12:07:32Z ALARM→OK (SNS action OK); 12:09:32Z OK→ALARM, then "Successfully executed action …:qmc-dev-alerts"
+```
+
+The job was not listed, and nothing was written: the test asserts `GET /jobs` is unchanged. This passes; HANDOFF 1.9 §11 says only 403 can be demonstrated live.
+
+## Secret-leak scan of the logs (I6, for SECURITY.md), 2026-10-13 ~12:10Z
+
+`AWS_PROFILE=qmc uv run python tools/log_scan.py`. It reads every event since 00:00 UTC in every `/aws/lambda/qmc-dev-*` group and matches regexes in Python, because CloudWatch filter terms are case-sensitive. It prints counts, never text. It does not read the real token: proving it absent would mean handling it. The control column must be non-zero in the API group, which proves the scan reads log text.
+
+```
+since 2026-10-13T00:00:00+00:00; groups: ['/aws/lambda/qmc-dev-api', '/aws/lambda/qmc-dev-worker']
+| log group | events scanned | Bearer | authorization (any case) | api_key | "token" | NOT-A-REAL-TOKEN (decoy marker) | control: qrypt_call |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| /aws/lambda/qmc-dev-api | 885 | 0 | 0 | 0 | 0 | 0 | 29 |
+| /aws/lambda/qmc-dev-worker | 848 | 0 | 0 | 0 | 0 | 0 | 0 |
+
+total matches: 0
+```
+
+Result: **0 matches** in 1,733 events across both groups, including the decoy marker `NOT-A-REAL-TOKEN`, which the API held in memory during both drills.
+
 ## Fail-closed drill with a decoy token (QMC-143), build_sha d0af0b1, 2026-10-13
 
 Sequence:
@@ -228,6 +267,6 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | deployed edge cases | 0 |
 | make e2e (11:26 UTC) | 1 |
 | make force-failure --duplicate (11:41 UTC) | 2 |
-| fail-closed decoy drill (11:51 UTC, Qrypt 403) | 0 |
+| fail-closed decoy drill (11:51 and 12:08 UTC, Qrypt 403) | 0 |
 | burst: aborted attempt (12:01:11) + run (12:01:50) | 5 + 15 |
 | **Total** | **23** |
