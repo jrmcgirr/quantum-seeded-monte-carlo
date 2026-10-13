@@ -39,6 +39,7 @@ PREFIX = "QMC-"
 
 # Gates in US Central time (see docs/HANDOFF.md section 2). GitLab milestones carry dates only,
 # and a milestone's due date must not be before its start date.
+# GitLab requires due_date > start_date, so same-day gates start the day before.
 MILESTONES = {
     "M0": (
         "M0 - G0 Contract frozen",
@@ -49,7 +50,7 @@ MILESTONES = {
     ),
     "M1": (
         "M1 - G1 Deployed end to end",
-        "2026-10-13",
+        "2026-10-12",
         "2026-10-13",
         "Gate G1, Tue 2026-10-13 6:00 PM Central. make apply from empty; make e2e: 1M-path job COMPLETE "
         "within 3 SE of Black-Scholes, then a bit-identical replay; correctness and golden tests green.",
@@ -63,14 +64,14 @@ MILESTONES = {
     ),
     "M3": (
         "M3 - G3 Proven",
-        "2026-10-14",
+        "2026-10-13",
         "2026-10-14",
         "Gate G3, Wed 2026-10-14 4:00 PM Central. Benchmarks, replay x20 bit-identical, coverage >= 80%, "
         "Checkov green with justified suppressions, TEST_RESULTS.md; stretch merged or cut.",
     ),
     "M4": (
         "M4 - G4 Finish line",
-        "2026-10-14",
+        "2026-10-13",
         "2026-10-14",
         "Gate G4, Wed 2026-10-14 9:00 PM Central (buffer to 11:59 PM; due Wednesday). README quick-start, "
         "diagram, cost note, AI_USAGE, video <= 5 min, fresh-clone rehearsal, stack deployed, GitHub mirror current.",
