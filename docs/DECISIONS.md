@@ -249,6 +249,19 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Leave the reservation `null` on dev. Fan-out would still be capped, but the worker would lose the hard upper bound that HANDOFF §10 lists against cost runaway.
 - **Why:** the old 1,000 threshold blocked a setting that already works. With this change, the 10-unit hard cost bound (I7) applies from the first apply instead of after a quota ticket.
 
+## D41 Qrypt 403 is `QRYPT_FORBIDDEN` *(contract change 003, HANDOFF 1.9)*
+
+- **Chose:**
+  - Rename the API error `QRYPT_QUOTA_EXHAUSTED` to **`QRYPT_FORBIDDEN`** (still 503). Its message names both possible causes: "Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up."
+  - 401 stays `QRYPT_AUTH_FAILED`; in practice that means a missing or malformed header.
+  - The live fail-closed drill therefore shows 503 `QRYPT_FORBIDDEN`.
+- **Why:** WS4's fail-closed drill with a decoy token (build `d0af0b1`) got HTTP 403, not 401, and the API reported a quota problem for what was a bad token. WS0 then probed Qrypt once with a fake token: `Bearer NOT-A-REAL-TOKEN` → 403 `{"error":"Forbidden or entropy quota reached"}`, and no `Authorization` header → 401. Qrypt sends the same status and body for a rejected token and an exhausted quota, so no client can tell them apart.
+- **Alternatives:**
+  - Keep the code name and change only the message. The code that graders see, and the `cause` property on `SeedingFailures`, would still be misleading.
+  - Map 403 to `QRYPT_AUTH_FAILED`. A real quota exhaustion would then be reported as a bad token.
+  - Parse the 403 body. It is the same for both causes.
+- **Invariants:** none change. I1 (fail closed, nothing written, cause named) holds, and the named cause is now accurate.
+
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).
