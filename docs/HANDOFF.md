@@ -1,6 +1,6 @@
 # Quantum-Seeded Monte Carlo — Handoff
 
-Version 1.9, 2026-10-13 (contract change 003: Qrypt 403 → `QRYPT_FORBIDDEN`; fail-closed drill expects it). 1.8, 2026-10-13 (D19: GitHub is a plain remote pushed at gates, not a mirror; GitLab CI on James's runner). 1.7, 2026-10-13 (contract change 002: reserved-concurrency threshold 110). 1.6, 2026-10-13 (G1 live: `kms:Decrypt` not needed). 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
+Version 1.10, 2026-10-13 (contract change 004: Qrypt limiter cap 10 per 10 s). 1.9, 2026-10-13 (contract change 003: Qrypt 403 → `QRYPT_FORBIDDEN`; fail-closed drill expects it). 1.8, 2026-10-13 (D19: GitHub is a plain remote pushed at gates, not a mirror; GitLab CI on James's runner). 1.7, 2026-10-13 (contract change 002: reserved-concurrency threshold 110). 1.6, 2026-10-13 (G1 live: `kms:Decrypt` not needed). 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
 
 Where this file disagrees with `docs/ASSIGNMENT.md`, **this file wins**; section 3 records how each conflict was resolved. The product view (who, why, success metrics) is in `docs/PRD.md`; the plan, gates and tickets are in `docs/ROADMAP.md`; the research behind every decision is in `docs/PRIMER.md`; the reasoning for each decision is in `docs/DECISIONS.md`.
 
@@ -83,7 +83,7 @@ The reasoning, alternatives and sources are in `docs/DECISIONS.md` and `docs/PRI
 | D7 | **One DynamoDB table**, `PROVISIONED` 10 RCU / 10 WCU, no autoscaling, no GSI, TTL on `ttl`, PITR off, AWS-owned encryption key (no `server_side_encryption` block). |
 | D8 | Fan-in: **conditional shard put + number-set `ADD done_shards` + conditional finalize**; lazy finalize on `GET` as a repair path. |
 | D9 | PARTIAL: **worker last-attempt marking** (`ApproximateReceiveCount ≥ maxReceiveCount`) **+ deadline reaper evaluated on `GET`**. The DLQ is never consumed; it is alarmed. PARTIAL is final. |
-| D10 | Qrypt rate limit: **DynamoDB fixed 10 s window, cap 15** (guarantees ≤ 30 in any rolling 10 s). Over budget → 429 with `Retry-After`. At most one jittered retry on Qrypt 429/5xx/network, inside a 2.5 s overall deadline. No PENDING_ENTROPY queue. |
+| D10 | Qrypt rate limit: **DynamoDB fixed 10 s window, cap 10** (1 call/s on average, the Qrypt trial key's stated limit; ≤ 20 in any rolling 10 s, well under the assignment's 30; contract change 004). Over budget → 429 with `Retry-After`. At most one jittered retry on Qrypt 429/5xx/network, inside a 2.5 s overall deadline. No PENDING_ENTROPY queue. |
 | D11 | Metrics via **hand-rolled EMF** log lines, namespace `QMC/<env>`, **no dimensions**, 8 metrics. No `cloudwatch:PutMetricData` anywhere. |
 | D12 | Fan-out cap via the event source mapping's **`maximum_concurrency` = 5**; worker **reserved concurrency = 10** set in James's `dev.tfvars` once the limit is ≥ 110 (100 unreserved + 10; the project account's limit is 400, contract change 002). The root default is `null`, so a grader's fresh low-quota account can still apply; `terraform.tfvars.example` explains when to set it. |
 | D13 | Packaging: **deterministic zips built outside Terraform** by `scripts/build_lambdas.py`; NumPy vendored in the worker zip from a hash-pinned `manylinux_2_28_x86_64` wheel; the API zip contains no NumPy; no layers, no containers. |
@@ -383,7 +383,7 @@ Over the shards in **index order** (for a partial result, the shards in `done_sh
 ### 7.5 Submit (`POST /jobs`, WS2)
 
 1. Parse and validate (§5.2). Failure → 400; nothing else happens.
-2. Generate `job_id`. Take a limiter slot (§6.2, window = `floor(now / 10)`, cap `QRYPT_MAX_PER_WINDOW` = 15). Window full → 429 `ENTROPY_RATE_LIMITED`.
+2. Generate `job_id`. Take a limiter slot (§6.2, window = `floor(now / 10)`, cap `QRYPT_MAX_PER_WINDOW` = 10). Window full → 429 `ENTROPY_RATE_LIMITED`.
 3. Read the token from SSM (§8.4). Failure → 503 `SECRET_UNAVAILABLE`.
    (Steps 2–5 write nothing except the limiter slot.)
 4. `GET https://api-eus.qrypt.com/api/v1/quantum-entropy?size=1` with `Accept: application/json`, `Authorization: Bearer <token>`, over a module-level `http.client.HTTPSConnection` reused across warm invocations, with an **overall deadline of 2,500 ms** (connect and read timeouts derived from the time left, and never more than `context.get_remaining_time_in_millis() - 500`). Parse with `qmc_core.seeds.parse_qrypt_response` (strict base64, one block, 1,024 bytes, not all-zero). Map failures per §5.3. Allow **at most one** retry, only for 429, 5xx or a network error, only if less than 1,000 ms have elapsed, after a 100–300 ms jittered pause, and only after taking another limiter slot. Never retry 400, 401 or 403. A reused keep-alive connection that the server closed while idle (connection reset or `RemoteDisconnected` before any response byte) is reopened once immediately; that reconnect is not the retry and needs no extra slot.
@@ -501,7 +501,7 @@ No `cloudwatch:PutMetricData` (EMF instead), no X-Ray, no `logs:CreateLogGroup`.
 | `QRYPT_API_KEY_PARAM` | ✓ | | `/qmc/qrypt-api-key` |
 | `QRYPT_URL` | ✓ | | `https://api-eus.qrypt.com/api/v1/quantum-entropy` |
 | `QRYPT_DEADLINE_MS` | ✓ | | 2500 |
-| `QRYPT_MAX_PER_WINDOW` | ✓ | | 15 |
+| `QRYPT_MAX_PER_WINDOW` | ✓ | | 10 |
 | `SECRET_CACHE_TTL_S` | ✓ | | 300 |
 | `MAX_PATHS`, `MAX_SHARDS`, `MAX_PATHS_PER_SHARD` | ✓ | | 10000000, 50, 1000000 |
 | `JOB_DEADLINE_S` | ✓ | | 900 |
@@ -525,7 +525,7 @@ The token parameter is fetched with `GetParameter(WithDecryption=True)` and cach
 
 ### 8.6 Variables (root)
 
-`env` (`dev`), `region` (`us-east-2`), `alert_email` (required, no default), `qrypt_api_key_param_name` (`/qmc/qrypt-api-key`), `table_rcu`/`table_wcu` (10/10), `max_receive_count` (3), `worker_timeout_s` (10), `visibility_timeout_s` (60, validated ≥ 6 × worker timeout), `worker_memory_mb` (1024), `api_memory_mb` (512), `worker_max_concurrency` (5), `worker_reserved_concurrency` (**default `null`**; James's `dev.tfvars` sets 10 once the quota allows; the example file explains how to check with `aws lambda get-account-settings`), `build_sha` (set by the Makefile from the manifest), `log_retention_days` (14), `max_paths`/`max_shards`/`max_paths_per_shard`, `qrypt_max_per_window` (15, validated ≤ 15), `job_deadline_s` (900), `enable_fault_injection` (false), `create_budget` (true), `budget_limit_usd` ("1.0"), `create_grader_user` (false), `api_zip`/`worker_zip` (`../build/*.zip`).
+`env` (`dev`), `region` (`us-east-2`), `alert_email` (required, no default), `qrypt_api_key_param_name` (`/qmc/qrypt-api-key`), `table_rcu`/`table_wcu` (10/10), `max_receive_count` (3), `worker_timeout_s` (10), `visibility_timeout_s` (60, validated ≥ 6 × worker timeout), `worker_memory_mb` (1024), `api_memory_mb` (512), `worker_max_concurrency` (5), `worker_reserved_concurrency` (**default `null`**; James's `dev.tfvars` sets 10 once the quota allows; the example file explains how to check with `aws lambda get-account-settings`), `build_sha` (set by the Makefile from the manifest), `log_retention_days` (14), `max_paths`/`max_shards`/`max_paths_per_shard`, `qrypt_max_per_window` (10, validated ≤ 15), `job_deadline_s` (900), `enable_fault_injection` (false), `create_budget` (true), `budget_limit_usd` ("1.0"), `create_grader_user` (false), `api_zip`/`worker_zip` (`../build/*.zip`).
 
 ## 9. Observability
 
@@ -595,12 +595,12 @@ The free-tier arithmetic for 100 jobs/day of 1M paths (PRIMER, "The free tier is
 | Duplicate SQS delivery | Integration: deliver each shard message twice and in a crash-between-writes order → same result, `n` unchanged. Deployed: re-send a shard message with `aws sqs send-message` after COMPLETE → job unchanged | G2 |
 | Worker failure → PARTIAL | As core 6, plus reaper test with a shard message deleted by hand (moto) | G2 |
 | Lambda timeout bound | Validation test for the ratio; worker duration at 1M paths/shard measured ≪ 10 s | G2 |
-| Burst vs 30 req/10 s | `make burst` (`tools/burst.py`): 40 concurrent submits → at most 15 Qrypt calls per 10 s window (from `QryptLatencyMs` sample counts and logs), the rest 429 | G2 |
+| Burst vs 30 req/10 s | `make burst` (`tools/burst.py`): 40 concurrent submits → at most 10 Qrypt calls per 10 s window (≤ 20 in any rolling 10 s) (from `QryptLatencyMs` sample counts and logs), the rest 429 | G2 |
 | Cost runaway | Validation tests for `MAX_PATHS` and the ratio; reserved and maximum concurrency visible in `terraform show` | G2 |
 | Invalid inputs | `tests/api/test_validation.py`: every §5.2 rule; deployed spot checks | G1 |
 | Clean teardown, no drift | `make drift-check` (`tools/drift_check.sh`, run by the integrator from `main`): `plan -detailed-exitcode` = 0 → destroy → no tagged resources, no `/aws/lambda/qmc-*` log groups, no SNS subscriptions left → apply again (timed) → `make e2e --fresh` → plan = 0 → confirm the new SNS subscription | G2 |
 | Empty / first run | `make e2e --fresh` right after an apply from empty: `GET /jobs` → `{"jobs": []}`; unknown id → 404 naming the id (without `--fresh`, e2e only checks that `jobs` is an array, so it can be rerun) | G1, G2 |
-| Benchmarks | `make bench` (`tools/bench.py`): 50 warm submits paced ≥ 700 ms start-to-start (under the limiter's 15 per 10 s; any 429 counted and reported) for p50/p95; cold-start latency from natural cold starts (first request after ≥ 15 min idle, and REPORT lines with `Init Duration`), no configuration changes; 5 × 1M wall clock; apply timing → `docs/BENCHMARKS.md` | G3 |
+| Benchmarks | `make bench` (`tools/bench.py`): 50 warm submits paced ≥ 1.0 s start-to-start (under the limiter's 10 per 10 s and the trial key's 1/s; any 429 counted and reported) for p50/p95; cold-start latency from natural cold starts (first request after ≥ 15 min idle, and REPORT lines with `Init Duration`), no configuration changes; 5 × 1M wall clock; apply timing → `docs/BENCHMARKS.md` | G3 |
 | IAM completeness | WS0's operation allow-list test (QMC-105) over every moto test | G0+ |
 | Coverage ≥ 80% | CI `pytest --cov --cov-fail-under=80`; `qmc_core` ≥ 90% | G3 |
 
@@ -661,3 +661,4 @@ The free-tier arithmetic for 100 jobs/day of 1M paths (PRIMER, "The free tier is
 | R21 | An apply from the wrong checkout deploys stale code or default settings (grader user deleted, fault injection off) | D33: settings outside worktrees, apply from `main` after G1, guard in the Makefile, `build_sha` in `/health` |
 | R22 | A grader's fresh account has a low concurrency quota | `worker_reserved_concurrency` defaults to null; README explains |
 | R23 | SQS stops emitting metrics for a queue inactive for 6 h, and the first metrics after reactivation can take **up to 15 minutes**: the always-idle DLQ is the worst case | `make warm-dlq` (any SQS API call on the DLQ, e.g. `get-queue-attributes`) ≥ 15 min before a drill or recording, repeated every few hours while drilling; drill timeout 20 min; the video cuts the wait |
+| R24 | The Qrypt trial key is rated 1 call/s; on 2026-10-13 it was not enforced (8 calls in one second, all 200) | Cap 10 per 10 s (D10, contract change 004); a Qrypt 429 gets one retry, then fails closed with `QRYPT_RATE_LIMITED` |

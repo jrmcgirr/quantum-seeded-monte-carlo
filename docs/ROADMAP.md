@@ -173,7 +173,7 @@ HANDOFF §8.2 `api` row, §8.3 API, client and grader statements (both invoke ac
 
 ### QMC-122 · POST /jobs: limiter, seed, entropy claim, job + joblist writes, enqueue, metrics · `ws2` · `early` · prio 11 · *never cut* · blocked by QMC-120, QMC-121
 
-HANDOFF §7.5 in order, with the §6.2 builders: limiter window cap 15; entropy uniqueness; HKDF; job and JOBLIST puts; SendMessageBatch (10 per call, failed entries retried twice, then `mark_enqueue_failed` + 503); EMF `JobsSubmitted`, `EntropyKiB`, `QryptLatencyMs`; on seeding failure `SeedingFailures` and **no** writes. Any failure after `job_put` succeeded runs `mark_enqueue_failed` and returns 503 (no job left QUEUED without messages).
+HANDOFF §7.5 in order, with the §6.2 builders: limiter window cap 10; entropy uniqueness; HKDF; job and JOBLIST puts; SendMessageBatch (10 per call, failed entries retried twice, then `mark_enqueue_failed` + 503); EMF `JobsSubmitted`, `EntropyKiB`, `QryptLatencyMs`; on seeding failure `SeedingFailures` and **no** writes. Any failure after `job_put` succeeded runs `mark_enqueue_failed` and returns 503 (no job left QUEUED without messages).
 
 **Acceptance:** moto tests: happy path writes one job (QUEUED, seed hex, params, deadline) and exactly `shards` messages; every Qrypt failure → mapped error and zero DynamoDB/SQS writes; 16th submit in a window → 429 with Retry-After; a repeated entropy block → 502; enqueue failure → job FAILED + 503. A throttled `joblist_put` (moto patched) leaves the job FAILED, not QUEUED.
 
@@ -279,7 +279,7 @@ Run `checkov -d infra`; fix what is fixable within $0; suppress the rest inline 
 
 ### QMC-147 · Benchmarks: submit p50/p95, 1M-path wall clock ×5, apply time (make bench) · `ws4` · `final` · prio 21 · *never cut* · blocked by QMC-143
 
-`tools/bench.py`: 50 warm submissions (after 3 warm-ups; small jobs), paced ≥ 700 ms start-to-start so the limiter (15 per 10 s) is not hit, timed client-side and from the API's REPORT lines; any 429 counted and reported, never silently dropped; p50/p95. Cold-start latency from natural cold starts (first request after ≥ 15 minutes idle, plus REPORT lines with `Init Duration` over the whole build via `filter-log-events`), no configuration changes. 5 runs of 1M paths timed submit → COMPLETE; apply-from-empty time from QMC-145. Write `docs/BENCHMARKS.md` with method, raw numbers and environment.
+`tools/bench.py`: 50 warm submissions (after 3 warm-ups; small jobs), paced ≥ 1.0 s start-to-start so the limiter (10 per 10 s) is not hit, timed client-side and from the API's REPORT lines; any 429 counted and reported, never silently dropped; p50/p95. Cold-start latency from natural cold starts (first request after ≥ 15 minutes idle, plus REPORT lines with `Init Duration` over the whole build via `filter-log-events`), no configuration changes. 5 runs of 1M paths timed submit → COMPLETE; apply-from-empty time from QMC-145. Write `docs/BENCHMARKS.md` with method, raw numbers and environment.
 
 **Acceptance:** BENCHMARKS.md has every table from the assignment's Performance Benchmarks; numbers compared with the targets (800 ms p95 warm, < 60 s, < 10 min).
 
