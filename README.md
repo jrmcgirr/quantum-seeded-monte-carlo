@@ -62,7 +62,15 @@ unset QRYPT_API_KEY
 
 ### 3. Settings, build and deploy
 
-*TBD: settings file location and contents from `infra/terraform.tfvars.example` (WS1): `alert_email`, `worker_reserved_concurrency` and when to set it.*
+*TBD: settings file location and contents from `infra/terraform.tfvars.example` (WS1), including `alert_email`.*
+
+**Worker reserved concurrency.** Check your account's Lambda concurrency limit:
+
+```sh
+aws lambda get-account-settings --query AccountLimit.ConcurrentExecutions
+```
+
+If it is **110 or more**, set `worker_reserved_concurrency = 10`. AWS keeps 100 unreserved, so a reservation of 10 needs at least 110. If the limit is lower, which is common on new accounts, leave the setting unset (the default is `null`). Fan-out is still capped at 5 concurrent workers by the queue mapping's `maximum_concurrency` (D12, D40).
 
 ```sh
 make setup

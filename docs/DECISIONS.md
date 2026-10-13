@@ -70,7 +70,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 
 ## D12 Concurrency controls
 
-- **Chose:** event source mapping `maximum_concurrency = 5`; worker reserved concurrency 10, set in James's `dev.tfvars` once the Day 0 quota increase lands. *(review)* The root default is `null`, so a grader's fresh low-quota account can still apply.
+- **Chose:** event source mapping `maximum_concurrency = 5`; worker reserved concurrency 10, set in James's `dev.tfvars` once the account's concurrency limit is ≥ 110 (D40, contract change 002; the project account's limit is 400, so dev sets 10). *(review)* The root default is `null`, so a grader's fresh low-quota account can still apply.
 - **Alternatives:** reserved concurrency alone (AWS's own demo shows throttled SQS messages landing in the DLQ); no caps (cost runaway).
 - **Why:** the mapping stops polling at its cap instead of throttling; reserved concurrency satisfies the assignment once the account allows it.
 
@@ -230,6 +230,14 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Chose:** the API role has `ssm:GetParameter` on the token parameter and **no** `kms:Decrypt` statement.
 - **Why:** the token parameter is encrypted with the AWS-managed `alias/aws/ssm` key, whose key policy authorizes account principals calling through SSM. WS2's first live submit (job `5358ec35af8a450d9eba939da9f610d9`, Qrypt HTTP 200, 2026-10-13) read it with `GetParameter(WithDecryption=True)` using only `ssm:GetParameter` (`docs/ai-log/WS2.md`).
 - **Alternatives:** the conditional grant HANDOFF §8.3 held in reserve (`kms:Decrypt` on the `aws/ssm` key with `kms:EncryptionContext:PARAMETER_ARN`). It was not needed, so leaving it out keeps the role smaller.
+
+## D40 Reserved-concurrency threshold 110, not 1,000 *(contract change 002, HANDOFF 1.7)*
+
+- **Chose:** set `worker_reserved_concurrency = 10` whenever the account's Lambda concurrency limit is at least **110**. AWS keeps 100 unreserved, the worker reserves 10, and the API reserves none. The project account's limit is 400 (`aws lambda get-account-settings` → `ConcurrentExecutions: 400`; Service Quotas `L-B99A9384`), so dev uses 10 from the first apply. The Terraform default stays `null`, so a grader's fresh account can still apply (R22). `maximum_concurrency = 5` is unchanged.
+- **Alternatives:**
+  - Request 1,000 anyway. It is free and usually approved, but G1 would wait on an AWS ticket, and the extra headroom buys nothing while `maximum_concurrency` caps fan-out at 5.
+  - Leave the reservation `null` on dev. Fan-out would still be capped, but the worker would lose the hard upper bound that HANDOFF §10 lists against cost runaway.
+- **Why:** the old 1,000 threshold blocked a setting that already works. With this change, the 10-unit hard cost bound (I7) applies from the first apply instead of after a quota ticket.
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
