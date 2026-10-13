@@ -36,3 +36,22 @@
     - Max memory 119–121 MB of 1024.
     - Simulation of 100k paths: 3–8 ms warm.
 - **Human check:** pending (James).
+
+## 2026-10-13, afternoon (edge tests, stretch tests, seeder review, contract change 009)
+
+- **Workstream:** WS3 Worker. **Tool and model:** Claude Code, Claude Opus 5.5 (`claude-opus-5-5`), directed by WS0, WS2 and WS4 sessions over cross-session messages.
+- **Asked and produced:**
+  - **Edge-path tests** (#51, MR !34): `tests/worker/test_edges.py`. Covers refusing a message with another `algo_version` (never simulated, I5), DynamoDB throttles on `shard_put` / `mark_done` / `finalize_complete` being reported and then repaired by redelivery, `mark_failed` itself failing, the job vanishing before finalize or on the last attempt, and paginated shard queries. No handler change was needed.
+  - **Stretch tests** (#48, #54, MR !39): `tests/worker/test_stretch.py`. Antithetic shards store pairs (`n` = paths / 2, and the result matches a direct simulation). A PENDING_ENTROPY job has no seed and no deadline until it is seeded, then completes. A stray message never finalizes a pending job. `conftest.make_job` gained `variance_reduction`.
+  - **Review of WS2's PENDING_ENTROPY seeder** (MR !43): found two confirmed bugs, duplicate delivery and a job left QUEUED with no messages, plus two minor gaps. Re-reviewed the fixes in MR !44 (280b173) with throwaway probes and confirmed them; nothing from the probes was committed.
+  - **Contract change 009** (#49, MR !48, 9b0d7ab): shard items record `invocation_ms`, measured from `_process` entry to just before `shard_put`, and `init_ms`.
+    - `INIT_MS` is measured at module init and charged only to the first shard each sandbox writes; later shards get 0. WS0 accepted this deviation from the draft.
+    - Test: `test_billing_fields_charge_init_once_and_time_the_invocation`.
+- **Verified:**
+  - `uv run pytest tests/worker` was green on each branch.
+  - Handler coverage reached 99% after !34. The only gap is the `197→exit` branch.
+  - The full suite on `ws3-billing`, rebased on main after WS4's !47, gave 416 passed.
+  - All four MRs passed CI and were merged by the integrator.
+  - Deployed result after 009 (WS4, `docs/TEST_RESULTS.md`, build 2b7bd48): cold invocations passed at 0.856×; warm ones failed at 0.170×. The cause is billed work after `shard_put` (the put, `mark_done`, EMF, finalize), about 15–45 ms per invocation, which `invocation_ms` does not cover by design.
+  - Resolution, chosen by James: WS0 added `cost.WORKER_OVERHEAD_MS = 22`. WS4 then measured 0.887× on a mixed run and 1.015× all-warm, both PASS (581563d). The worker was not changed.
+- **Human check:** James chose the cost resolution, option (b) `WORKER_OVERHEAD_MS`, and the integrator merged the MRs. The code review of the MRs was done by peer sessions; no line-by-line human review is recorded.
