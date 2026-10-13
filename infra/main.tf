@@ -61,6 +61,7 @@ module "api" {
   worker_memory_mb       = var.worker_memory_mb
   enable_fault_injection = var.enable_fault_injection
   create_grader_user     = var.create_grader_user
+  enable_step_functions  = var.enable_step_functions
 }
 
 module "observability" {

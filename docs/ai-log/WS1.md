@@ -87,3 +87,31 @@
   - Budget notifications to SNS only (requested by WS0, approved by James): removed `subscriber_email_addresses` from all three notifications and the budget module's `alert_email` variable. Reason: Budgets' direct email subscribers need AWS User Notifications verification, and the project SCP denies `notifications-contacts:*` (`DenyNotificationContactsOperations`, in AWS's published project SCPs), so the address showed "unverified". Alerts reach James through `qmc-dev-alerts`, whose email subscription is confirmed.
   - Checks: `validate` and tflint clean; checkov 137 passed, 0 failed, 20 skipped. A `-lock=false` plan at the deployed sha shows `aws_budgets_budget` 1 in-place (three `subscriber_email_addresses` → `[]`); after commit, the sha bump adds 2 Lambda updates. The plan after apply must confirm no drift on the empty list.
 - **Human checks:** James approved the change; WS0 merges and applies; James screenshots the Budget page.
+
+## 2026-10-13, about 10:20–10:40 AM CT, WS1 Infrastructure (drift-check destroy failure, MR !28)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Incident:** drift-check's `make destroy` (main 372583c, 15:18Z) removed everything except `qmc-dev-grader`, then failed on `iam:DeleteLoginProfile`. That's an SCP explicit deny: the Paid-plan `DenyIAMRestrictedActions` denies `iam:*LoginProfile*`. The cause was my own `force_destroy = true` on the user (set in QMC-113), which makes the provider delete the login profile, keys and MFA before `DeleteUser`.
+- **Produced:** MR !28, `force_destroy = false` with a comment: delete the CLI-created grader access key (D26) by CLI before any destroy. Diagnosed that destroy reads `force_destroy` from state (still `true`), so merging alone wouldn't unblock it, and gave WS0 a targeted apply on the user (state-only update) followed by `make destroy`, with `state rm` plus `aws iam delete-user` as the alternative.
+- **Outcome (WS0, from main):**
+  - The targeted apply flipped `force_destroy` at 15:32:40Z (1 changed), and destroy finished with `DeleteUser` in 1 s.
+  - The orphan scan found nothing (11/11 checks clean).
+  - **Apply from empty: 33 resources in 65 s.**
+  - `make e2e --fresh` passed 12/12, and the final plan shows no changes.
+  - WS0 added the key-deletion step to HANDOFF's G4 final sequence and R26.
+- **Lesson:** under the project SCP, `force_destroy` on an IAM user is unusable. Any provider "force" cleanup that touches denied APIs fails at destroy, not apply, so only a real teardown catches it.
+- **Human checks:** James approved the push and MR. The new SNS subscription (created by the apply from empty) needs his confirmation.
+
+## 2026-10-13, WS1 Infrastructure (stretch: QMC-127, QMC-128)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **QMC-127, Step Functions watcher (contract change 007), off by default:**
+  - `enable_step_functions` (default false). The state machine `qmc-<env>-watcher` is STANDARD with logging OFF and tracing off. Its definition is in `infra/modules/api/watcher.asl.json`, rendered with `templatefile()` so WS4 can validate exactly what is deployed (WS0's request).
+  - The execution role is trusted by `states.amazonaws.com` with `aws:SourceAccount` and `aws:SourceArn`, and has `dynamodb:GetItem` on the table only. The API role gets `states:StartExecution` on the machine ARN only; the API env gets `SFN_ARN` only when enabled; output `state_machine_arn` (null when off). ARNs are built as strings.
+  - Checkov: CKV_AWS_284 and CKV_AWS_285 suppressed with reasons. A CKV_AWS_364 suppression I added didn't match any check Checkov runs on the resource, so I removed it. Result: 140 passed, 0 failed, 22 skipped.
+  - Plans (`-lock=false`): off → 2 changed (sha bump only; no sfn resources, no policy or env change). On → 3 to add (role, policy, state machine), 3 to change (API policy + `states:StartExecution`, API env + `SFN_ARN`, worker sha bump).
+- **QMC-128, PENDING_ENTROPY Terraform part (contract change 008),** on branch `ws1-pending` for a separate MR:
+  - The API role gets `lambda:InvokeFunction` on its own ARN (string-built). `aws_lambda_function_event_invoke_config` on the API: 0 retries, 300 s maximum event age.
+  - API env: `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` "2000,4000,8000", `PENDING_MAX_AGE_S` 120, `MAX_PENDING_ENTROPY` 10.
+  - Checkov 137 passed, 0 failed. Plan: 1 to add, 3 to change (incl. sha bump).
+- **Human checks:** James decided the stretch scope (HANDOFF 1.17 D21). The watcher stays off by default, so $0 holds (I7).

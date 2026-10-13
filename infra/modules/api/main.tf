@@ -3,6 +3,9 @@ locals {
   # Built from the name, not aws_lambda_function.api.arn, which goes unknown during an in-place update and would
   # make every build_sha bump re-plan the invoke policies.
   function_arn = "arn:aws:lambda:${data.aws_region.current.region}:${var.account_id}:function:${local.function_name}"
+  # Optional Step Functions watcher (contract change 007), ARN built as a string for the same reason.
+  watcher_name = "${var.name}-watcher"
+  watcher_arn  = "arn:aws:states:${data.aws_region.current.region}:${var.account_id}:stateMachine:${local.watcher_name}"
 }
 
 data "aws_region" "current" {}
@@ -70,6 +73,15 @@ data "aws_iam_policy_document" "api" {
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
     resources = ["${aws_cloudwatch_log_group.api.arn}:*"]
   }
+
+  dynamic "statement" {
+    for_each = var.enable_step_functions ? [1] : []
+    content {
+      sid       = "StartWatcher"
+      actions   = ["states:StartExecution"]
+      resources = [local.watcher_arn]
+    }
+  }
 }
 
 resource "aws_iam_role_policy" "api" {
@@ -97,7 +109,7 @@ resource "aws_lambda_function" "api" {
   source_code_hash = filebase64sha256(var.zip_path)
 
   environment {
-    variables = {
+    variables = merge({
       QMC_ENV                 = var.env
       QMC_BUILD_SHA           = var.build_sha
       TABLE_NAME              = var.table_name
@@ -116,7 +128,10 @@ resource "aws_lambda_function" "api" {
       WORKER_MEMORY_MB        = tostring(var.worker_memory_mb)
       FAULT_INJECTION_ENABLED = tostring(var.enable_fault_injection)
       LOG_LEVEL               = "INFO"
-    }
+      },
+      # Only when the watcher is on, so the default plan never touches the environment.
+      var.enable_step_functions ? { SFN_ARN = local.watcher_arn } : {},
+    )
   }
 
   depends_on = [aws_cloudwatch_log_group.api, aws_iam_role_policy.api]
@@ -194,4 +209,76 @@ resource "aws_iam_user_policy" "grader" {
   name   = "${var.name}-invoke"
   user   = aws_iam_user.grader[0].name
   policy = data.aws_iam_policy_document.invoke.json
+}
+
+# Optional Step Functions watcher (contract change 007, QMC-127). Off by default: transitions beyond the 4,000
+# always-free per month cost money (I7). It only reads the job item until the job is terminal.
+data "aws_iam_policy_document" "watcher_assume" {
+  count = var.enable_step_functions ? 1 : 0
+
+  statement {
+    actions = ["sts:AssumeRole"]
+
+    principals {
+      type        = "Service"
+      identifiers = ["states.amazonaws.com"]
+    }
+
+    condition {
+      test     = "StringEquals"
+      variable = "aws:SourceAccount"
+      values   = [var.account_id]
+    }
+
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:SourceArn"
+      values   = [local.watcher_arn]
+    }
+  }
+}
+
+resource "aws_iam_role" "watcher" {
+  count              = var.enable_step_functions ? 1 : 0
+  name               = local.watcher_name
+  assume_role_policy = data.aws_iam_policy_document.watcher_assume[0].json
+}
+
+data "aws_iam_policy_document" "watcher" {
+  count = var.enable_step_functions ? 1 : 0
+
+  statement {
+    sid       = "ReadJob"
+    actions   = ["dynamodb:GetItem"]
+    resources = [var.table_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "watcher" {
+  count  = var.enable_step_functions ? 1 : 0
+  name   = local.watcher_name
+  role   = aws_iam_role.watcher[0].id
+  policy = data.aws_iam_policy_document.watcher[0].json
+}
+
+resource "aws_sfn_state_machine" "watcher" {
+  #checkov:skip=CKV_AWS_284:X-Ray tracing off (D18); the machine only polls one item
+  #checkov:skip=CKV_AWS_285:Execution logging off by design (007): no log group, no ingestion cost; execution history is kept by Step Functions
+  count    = var.enable_step_functions ? 1 : 0
+  name     = local.watcher_name
+  type     = "STANDARD"
+  role_arn = aws_iam_role.watcher[0].arn
+
+  # In its own file so tests can render and validate exactly what is deployed.
+  definition = templatefile("${path.module}/watcher.asl.json", { table_name = var.table_name })
+
+  logging_configuration {
+    level = "OFF"
+  }
+
+  tracing_configuration {
+    enabled = false
+  }
+
+  depends_on = [aws_iam_role_policy.watcher]
 }

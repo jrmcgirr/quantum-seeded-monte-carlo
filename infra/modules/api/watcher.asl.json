@@ -1,0 +1,51 @@
+{
+  "Comment": "Watch one job until it is terminal (contract change 007).",
+  "StartAt": "Wait",
+  "TimeoutSeconds": 1200,
+  "States": {
+    "Wait": {
+      "Type": "Wait",
+      "Seconds": 10,
+      "Next": "GetJob"
+    },
+    "GetJob": {
+      "Type": "Task",
+      "Resource": "arn:aws:states:::dynamodb:getItem",
+      "Parameters": {
+        "TableName": "${table_name}",
+        "ConsistentRead": true,
+        "Key": {
+          "pk": { "S.$": "States.Format('JOB#{}', $.job_id)" },
+          "sk": { "S": "META" }
+        }
+      },
+      "ResultSelector": { "status.$": "$.Item.status.S" },
+      "ResultPath": "$.job",
+      "Retry": [
+        {
+          "ErrorEquals": ["States.TaskFailed", "DynamoDB.ProvisionedThroughputExceededException"],
+          "IntervalSeconds": 2,
+          "BackoffRate": 2,
+          "MaxAttempts": 3
+        }
+      ],
+      "Next": "Check"
+    },
+    "Check": {
+      "Type": "Choice",
+      "Choices": [
+        {
+          "Or": [
+            { "Variable": "$.job.status", "StringEquals": "QUEUED" },
+            { "Variable": "$.job.status", "StringEquals": "PENDING_ENTROPY" }
+          ],
+          "Next": "Wait"
+        },
+        { "Variable": "$.job.status", "StringEquals": "COMPLETE", "Next": "Complete" }
+      ],
+      "Default": "NotComplete"
+    },
+    "Complete": { "Type": "Succeed" },
+    "NotComplete": { "Type": "Fail", "Error": "JobNotComplete", "Cause": "The job ended PARTIAL or FAILED." }
+  }
+}

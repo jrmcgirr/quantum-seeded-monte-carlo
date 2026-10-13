@@ -107,3 +107,8 @@ variable "create_grader_user" {
   description = "Create the grader user and its group."
   type        = bool
 }
+
+variable "enable_step_functions" {
+  description = "Create the optional Step Functions watcher and grant the API states:StartExecution on it."
+  type        = bool
+}
