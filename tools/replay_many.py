@@ -59,6 +59,7 @@ def main() -> int:
             print(f"sleeping {args.gap_min} min (execution environments recycle)", flush=True)
             time.sleep(args.gap_min * 60)
         size = min(args.batch, args.n - start)
+        print(f"batch {b + 1} starts {time.strftime('%H:%M:%SZ', time.gmtime())}", flush=True)
         posted = [call("POST", f"/jobs/{original}/replay") for _ in range(size)]
         ids = [body["job_id"] for status, _, body in posted if status == 202]
         check(

@@ -6,7 +6,8 @@ The validation and routing checks are rejected before the limiter: they spend no
 Fail-closed drill (only during the drill): WS4 creates the decoy SecureString
 ``/qmc/qrypt-api-key-invalid``; the integrator applies with
 ``EXTRA_VARS='-var qrypt_api_key_param_name=/qmc/qrypt-api-key-invalid'``; then run with
-``QMC_DRILL=fail-closed``. The integrator re-applies normally afterwards (plan = 0), and WS4
+``QMC_DRILL=fail-closed``. Qrypt answers a bad token with the same 403 as an exhausted quota,
+so the expected code is QRYPT_FORBIDDEN (contract change 003). The integrator re-applies normally afterwards (plan = 0), and WS4
 deletes the decoy.
 """
 
@@ -86,7 +87,7 @@ def test_fail_closed_bad_token():
     print(
         f"submit with the decoy token → {status} {body} at {time.strftime('%TZ', time.gmtime(t0))}"
     )
-    assert status == 503 and body["error"]["code"] == "QRYPT_AUTH_FAILED"
+    assert status == 503 and body["error"]["code"] == "QRYPT_FORBIDDEN"  # contract change 003
     after = {j["job_id"] for j in request("GET", "/jobs")[2]["jobs"]}
     assert after == before, "a rejected job must not be listed"
     # The SeedingFailures alarm (300 s period) is polled by hand:
