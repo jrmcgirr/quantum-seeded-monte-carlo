@@ -49,3 +49,13 @@
   - Checks: `validate` and tflint clean; checkov 137 passed, 0 failed, 20 skipped. A `-lock=false` plan (the integrator was applying) showed the dashboard as 1 to add, plus the 2 sha-bump Lambda updates.
   - Pointed out to WS0 and WS4 that GitLab's golden job runs emulated on James's Apple Silicon runner. WS0 had already recorded it (HANDOFF 1.8, D19); the GitHub Actions x86 runners are the native check.
 - **Human checks:** James approved pushing MR !7 and starting QMC-118. Since G1 the integrator applies from main, so this session no longer applies.
+
+## 2026-10-13, about 7:00–7:40 AM CT, WS1 Infrastructure (handoffs, contract change 004)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - QMC-118 merged as MR !8 and applied by WS0 from main 855e8d6 at 12:04:35Z: 1 added, 2 changed, then a plan with no changes, so `dashboard_body` doesn't drift. #38 closed.
+  - QMC-117 handoff: sent WS5 (through WS0) the Checkov suppression list with each reason, read from the code. That's 20 skips across **13** distinct checks; I first said 14, counting CKV_AWS_116 twice. WS5's re-run on 855e8d6: 137 passed, 0 failed, 20 skipped. WS0 closed #35.
+  - Golden-hash emulation risk flagged to WS0 and WS4. WS4's `tools/shard_crosscheck.py` reproduced real-Lambda job edaff921 (10 shards × 100k) bit for bit under Rosetta x86 and natively on arm64; the native-x86 GitHub run is the last check.
+  - Contract change 004 (HANDOFF 1.10): `qrypt_max_per_window` default 15 → 10 (Qrypt trial key, 1 call/s), validation 1–15 kept. `~/.qmc/dev.tfvars` doesn't override it. A `-lock=false` plan shows only `QRYPT_MAX_PER_WINDOW` "15" → "10" on qmc-dev-api, plus the `build_sha` bump on both Lambdas.
+- **Human checks:** James approved pushing MR !8 and this MR. The integrator applies from main; this session ran only read-only plans.
