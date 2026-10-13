@@ -91,7 +91,7 @@ def test_200_returns_block_and_sends_headers(stub):
     [
         (400, ErrorCode.QRYPT_BAD_REQUEST, 1),
         (401, ErrorCode.QRYPT_AUTH_FAILED, 1),
-        (403, ErrorCode.QRYPT_QUOTA_EXHAUSTED, 1),
+        (403, ErrorCode.QRYPT_FORBIDDEN, 1),
         (429, ErrorCode.QRYPT_RATE_LIMITED, 2),
         (500, ErrorCode.QRYPT_SERVER_ERROR, 2),
         (503, ErrorCode.QRYPT_ENTROPY_UNAVAILABLE, 2),

@@ -196,7 +196,7 @@ def _left(deadline: float) -> float:
 _FAULTS: dict[ErrorCode, tuple[int, bytes]] = {
     ErrorCode.QRYPT_BAD_REQUEST: (400, b"{}"),
     ErrorCode.QRYPT_AUTH_FAILED: (401, b"{}"),
-    ErrorCode.QRYPT_QUOTA_EXHAUSTED: (403, b"{}"),
+    ErrorCode.QRYPT_FORBIDDEN: (403, b'{"error":"Forbidden or entropy quota reached"}'),
     ErrorCode.QRYPT_RATE_LIMITED: (429, b"{}"),
     ErrorCode.QRYPT_SERVER_ERROR: (500, b"{}"),
     ErrorCode.QRYPT_ENTROPY_UNAVAILABLE: (503, b"{}"),
