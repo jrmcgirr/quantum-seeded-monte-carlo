@@ -233,7 +233,18 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 
 ## Limitations and what we left out
 
-*TBD: Step Functions, PENDING_ENTROPY, ephemeral environments, portfolio VaR, CI deploys, and why (D21); anything cut at G3.*
+| Item | Status | Why |
+| --- | --- | --- |
+| Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox |
+| Ephemeral per-branch environments | **Parked** (D46) | The account's SCP denies creating OIDC providers, so CI would need a long-lived admin-level key in a public repo; per-environment alarms and metrics would exceed the free tier's 10 |
+| CI deploys | **Out** (D21) | Same credential problem; every apply runs from `main` by the integrator (D33) |
+| Step Functions watcher | Being added, **off by default** (D21, contract change 007) | *TBD when it lands* |
+| PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | Being added, **opt-in** (D21, contract change 008) | *TBD when it lands* |
+
+Other known limits:
+
+- Bit-identical replay holds for the same NumPy build, x86_64, SIMD target and algorithm version, all of which every job records. On a host where NumPy would use AVX-512, the worker refuses to run instead (D2, D36).
+- The Qrypt trial key allows about one call a second, so submits are spaced ≥ 2 s apart (D10).
 
 ## Documents
 
