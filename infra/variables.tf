@@ -135,25 +135,14 @@ variable "max_paths_per_shard" {
   default     = 1000000
 }
 
-variable "qrypt_max_per_window" {
-  description = "Qrypt calls allowed per fixed limiter window of qrypt_window_s (QRYPT_MAX_PER_WINDOW). 1 per 1 s matches the 1 call/s the Qrypt trial key enforces; any rolling 10 s <= 10 (contract changes 004, 005)."
+variable "qrypt_min_gap_ms" {
+  description = "Minimum gap in ms between Qrypt calls (QRYPT_MIN_GAP_MS, contract change 006). 2000 = at most 1 call per 2 s; raise it if Qrypt still returns 429."
   type        = number
-  default     = 1
+  default     = 2000
 
   validation {
-    condition     = var.qrypt_max_per_window >= 1 && var.qrypt_max_per_window <= 15
-    error_message = "qrypt_max_per_window must be between 1 and 15."
-  }
-}
-
-variable "qrypt_window_s" {
-  description = "Length in seconds of the fixed Qrypt limiter window (QRYPT_WINDOW_S, contract change 005)."
-  type        = number
-  default     = 1
-
-  validation {
-    condition     = var.qrypt_window_s >= 1 && var.qrypt_window_s <= 10 && floor(var.qrypt_window_s) == var.qrypt_window_s
-    error_message = "qrypt_window_s must be an integer between 1 and 10."
+    condition     = var.qrypt_min_gap_ms >= 1000 && var.qrypt_min_gap_ms <= 10000 && floor(var.qrypt_min_gap_ms) == var.qrypt_min_gap_ms
+    error_message = "qrypt_min_gap_ms must be an integer between 1000 and 10000."
   }
 }
 

@@ -68,13 +68,8 @@ variable "qrypt_param_arn" {
   type        = string
 }
 
-variable "qrypt_max_per_window" {
-  description = "QRYPT_MAX_PER_WINDOW."
-  type        = number
-}
-
-variable "qrypt_window_s" {
-  description = "QRYPT_WINDOW_S (limiter window length, s)."
+variable "qrypt_min_gap_ms" {
+  description = "QRYPT_MIN_GAP_MS (minimum gap between Qrypt calls, ms)."
   type        = number
 }
 
