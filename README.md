@@ -168,6 +168,8 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 *TBD: $1 Budget, seven alarms, validation limits and concurrency caps, with the deployed values. Custom metrics: Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard; the metrics themselves come from EMF log lines, so no role needs the `cloudwatch:PutMetricData` wildcard.*
 
+**Qrypt rate limit, measured** (WS4 `make burst`, build `d0af0b1`, `docs/TEST_RESULTS.md`): 40 concurrent submits → 15 × 202 and 25 × 429 `ENTROPY_RATE_LIMITED`, each with `Retry-After`. At most 15 Qrypt calls landed in any rolling 10 s, against Qrypt's limit of 30.
+
 ## Why the worker fails closed at init
 
 *TBD: the SIMD self-check raises at import when NumPy would dispatch `exp` to AVX-512 (a different result by 1 ULP), because no result is better than a non-reproducible one; handler code otherwise never raises.*
