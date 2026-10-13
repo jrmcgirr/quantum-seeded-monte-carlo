@@ -134,6 +134,33 @@ Jobs: `744f0984` (QUEUED at submit), `bec89cf1`, `0ad99503`, `b55c66f3`, `08e56c
 - Qrypt spent: 5 KiB (5 calls), not 10. Refused slots never reach Qrypt.
 - The acceptance check is not loosened; WS0/James decide the fix.
 
+### Re-run after the slot-wait fix (James: "wait for slot + jitter", MR !57), main effb192, 2026-10-13 ~19:42Z
+
+**What changed (WS2):** when our own 2 s limiter refuses a slot, that no longer costs an attempt. The seeder waits `retry_after` plus a random 0–2 s, either in the same invocation or through a self-invoke hop that keeps the same attempt number. It gives up at hop 15 or at `pending_until`. Real Qrypt or network failures still count as attempts.
+
+**Tests:** three moto tests were added to `tests/integration/test_pending_entropy.py`:
+- an in-process wait spends no attempt;
+- a wait that doesn't fit hops with the same attempt;
+- hop 15 fails closed with `ENTROPY_RATE_LIMITED`.
+
+They fail on the old seeder (`pending.py` at b0ee345).
+
+**Run:** same drill and same acceptance; the attempts check was added. Qrypt: 10 KiB.
+
+| check | result | detail |
+| --- | --- | --- |
+| every submit 202 | PASS | 1 QUEUED, 9 PENDING_ENTROPY |
+| all 10 jobs COMPLETE | **PASS** | 10 COMPLETE |
+| `entropy_attempts` ≤ PENDING_MAX_ATTEMPTS (4) | PASS | 9 jobs at 1 (the submit's refusal), 1 at 0 |
+| Qrypt calls ≥ 2 s apart | PASS | 10 calls; gaps 3.446, 2.471, 2.197, 2.19, 2.432, 2.862, 2.847, 2.892, 3.099 s |
+| ≤ 5 in any rolling 10 s | PASS | max 5 |
+| no Qrypt 429 | PASS | 10 × 200 |
+| RL#qrypt/LAST = last call's slot | PASS | |
+| seeder log clean | PASS | `entropy_seeded` 9; no `duplicate_seeder`, `seeder_error`, `seeding_failed`, `seeder_invoke_failed` or `seeder_hops_exhausted` |
+| replay of a queued job bit-identical | PASS | `afaf4d85c1d84803b83e55de3a1027fd` → `8876f9c98fa642d588da28a4ff2fa178`, fingerprints match |
+
+Jobs: `afaf4d85`, `8075cccd`, `c6151bb9`, `c113590a`, `224d4964`, `631284a3`, `d5755632`, `74802821`, `1b11d897`, `be2a1bc2`. QMC-128 accepted: the finding above is fixed with the assertion unchanged.
+
 ## Step Functions watcher drill (QMC-127, contract change 007), main b0ee345 + `enable_step_functions=true`, 2026-10-13 ~18:18Z
 
 WS0 applied at 18:16:02Z: 3 added and 3 changed, as WS1 predicted. The machine is `arn:aws:states:us-east-2:563632884084:stateMachine:qmc-dev-watcher`.
@@ -697,4 +724,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | cost validation with WORKER_OVERHEAD_MS (~18:10 UTC) | 2 |
 | PENDING_ENTROPY burst drill (~18:13 UTC; 5 Qrypt calls) | 5 |
 | Step Functions watcher drill (~18:18 UTC) | 2 |
-| **Total** | **101** |
+| PENDING_ENTROPY burst re-run after slot-wait fix (~19:42 UTC) | 10 |
+| **Total** | **111** |
