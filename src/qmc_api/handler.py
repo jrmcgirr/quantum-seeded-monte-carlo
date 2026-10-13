@@ -10,7 +10,7 @@ import re
 import time
 from decimal import Decimal
 
-from qmc_api import aws, jobs, submit
+from qmc_api import aws, jobs, pending, submit
 from qmc_core import ddb, logjson
 from qmc_core.errors import ErrorCode, QmcError
 
@@ -72,6 +72,9 @@ def handle(event, context):
     request_id = getattr(context, "aws_request_id", "local")
     logjson.clear()
     logjson.bind(request_id=request_id)
+    if isinstance(event, dict) and "qmc_seed" in event and "requestContext" not in event:
+        pending.run(event, context)  # async PENDING_ENTROPY seeding (contract change 008)
+        return None
     t0 = time.monotonic()
     headers = {"content-type": "application/json", "x-request-id": request_id}
     try:

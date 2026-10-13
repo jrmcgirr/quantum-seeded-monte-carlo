@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import time
 
-from qmc_api import aws
+from qmc_api import aws, pending
 from qmc_core import bs, codec, cost, ddb, emf, logjson, replay
 from qmc_core.aggregate import Result, aggregate, decide
 from qmc_core.errors import ErrorCode, QmcError
@@ -18,7 +18,7 @@ def _not_found(job_id: str) -> QmcError:
     return QmcError(ErrorCode.JOB_NOT_FOUND, f"No job with id {job_id!r}.")
 
 
-def _read(table, job_id: str) -> dict | None:
+def read(table, job_id: str) -> dict | None:
     return table.get_item(**ddb.job_get(job_id)).get("Item")
 
 
@@ -40,9 +40,13 @@ def settled_job(table, job_id: str) -> dict:
     """
     if not is_job_id(job_id):
         raise _not_found(job_id)
-    job = _read(table, job_id)
+    job = read(table, job_id)
     if job is None:
         raise _not_found(job_id)
+    if job["status"] == pending.PENDING and time.time() > int(job["pending_until"]):
+        # The seeder's async event was lost or is stuck: the expiry backstop (contract change 008).
+        pending.fail_pending(table, job_id, job.get("last_entropy_error") or "PENDING_EXPIRED")
+        return read(table, job_id)
     for _ in range(2):
         now = time.time()
         d = decide(job, now_epoch=now)
@@ -64,7 +68,7 @@ def settled_job(table, job_id: str) -> dict:
             if not ddb.is_conditional_failure(exc):
                 raise
             logjson.log("lazy_finalize_refused", action=d.action, reason=d.reason)
-        job = _read(table, job_id)
+        job = read(table, job_id)
     return job
 
 
@@ -101,8 +105,8 @@ def view(table, job: dict, shards: list[dict]) -> dict:
         "variance_reduction": job["variance_reduction"],
         "chunk_size": job["chunk_size"],
         "progress": {"done": len(done), "failed": len(failed), "total": job["shards"]},
-        "master_seed_hex": job["master_seed_hex"],
-        "seed_provenance": job["seed_provenance"],
+        "master_seed_hex": job.get("master_seed_hex"),  # absent while PENDING_ENTROPY
+        "seed_provenance": job.get("seed_provenance"),
         "result": result,
         "reference": bs.reference(params, shown["estimate"], shown["std_error"]) if shown else None,
         "failed_shards": sorted(failed),
@@ -111,6 +115,10 @@ def view(table, job: dict, shards: list[dict]) -> dict:
         "replay_check": _replay_check(table, job, shards),
         "fingerprint": replay.job_fingerprint(shards) if shards else None,
         "cost_estimate": cost.estimate(job, shards) if shards else None,
+        "entropy_attempts": job.get("entropy_attempts"),
+        "last_entropy_error": job.get("last_entropy_error"),
+        "pending_until": job.get("pending_until"),
+        "fail_reason": job.get("fail_reason"),
     }
 
 
@@ -118,7 +126,7 @@ def _replay_check(table, job: dict, shards: list[dict]) -> dict | None:
     original_id = job.get("replay_of")
     if not original_id or job["status"] not in ("COMPLETE", "PARTIAL"):
         return None
-    original = _read(table, original_id)
+    original = read(table, original_id)
     if original is None:  # expired by TTL
         return None
     return replay.compare(original, _shards(table, original_id), job, shards)

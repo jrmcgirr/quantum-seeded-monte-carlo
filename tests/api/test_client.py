@@ -47,6 +47,19 @@ def test_request_is_signed_and_never_raises_on_4xx(monkeypatch, aws_env):
             ["submit", "--S0", "100", "--paths", "10", "--shards", "2"],
             ("POST", "/jobs", {"S0": 100.0, "paths": 10, "shards": 2}),
         ),
+        (
+            ["submit", "--paths", "10", "--shards", "2", "--antithetic", "--queue"],
+            (
+                "POST",
+                "/jobs",
+                {
+                    "paths": 10,
+                    "shards": 2,
+                    "variance_reduction": "antithetic",
+                    "on_entropy_failure": "queue",
+                },
+            ),
+        ),
         (["get", "abc"], ("GET", "/jobs/abc", None)),
         (["replay", "abc"], ("POST", "/jobs/abc/replay", None)),
         (["list"], ("GET", "/jobs", None)),
