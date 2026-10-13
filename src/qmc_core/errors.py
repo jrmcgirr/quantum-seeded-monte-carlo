@@ -50,15 +50,22 @@ class QmcError(Exception):
         details: list[dict[str, str]] | None = None,
         retry_after: int | None = None,
     ) -> None:
-        raise NotImplementedError
+        self.code = code
+        self.message = message or code.default_message
+        self.details = details
+        self.retry_after = retry_after
+        super().__init__(f"{code.name}: {self.message}")
 
     @property
     def http_status(self) -> int:
-        raise NotImplementedError
+        return self.code.http_status
 
     def to_body(self) -> dict:
         """``{"error": {"code", "message", "details"?}}`` (details only when present)."""
-        raise NotImplementedError
+        error: dict = {"code": self.code.name, "message": self.message}
+        if self.details:
+            error["details"] = self.details
+        return {"error": error}
 
 
 class EntropyError(QmcError):

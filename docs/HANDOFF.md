@@ -1,6 +1,6 @@
 # Quantum-Seeded Monte Carlo — Handoff
 
-Version 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
+Version 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
 
 Where this file disagrees with `docs/ASSIGNMENT.md`, **this file wins**; section 3 records how each conflict was resolved. The product view (who, why, success metrics) is in `docs/PRD.md`; the plan, gates and tickets are in `docs/ROADMAP.md`; the research behind every decision is in `docs/PRIMER.md`; the reasoning for each decision is in `docs/DECISIONS.md`.
 
@@ -187,6 +187,10 @@ The signatures and docstrings in `src/qmc_core/*.py` are the contract. In partic
 - **Worker.** `ForcedFailure` is defined in `qmc_worker`. The worker reads `TABLE_NAME` and `QUEUE_URL` from the environment at call time (or caches them lazily on first use), never at import, so moto tests can set them per test. Poison messages get no visibility change (§7.6 step 1). `ShardFailures` is emitted only when `mark_failed` succeeds.
 - **Concurrency tests.** moto's in-process backend is not guaranteed to be thread-safe. Prove races with deterministic interleavings (run step A of worker 1, then step B of worker 2, …), not threads.
 - **Shared test fixtures** (`tests/conftest.py`, WS0): `aws_env`, `moto_aws`, `ddb_table` (resource Table `qmc-test`), `queues` (sets `QUEUE_URL`; redrive 3), `qrypt_param`, `enforce_off`, and `iam_guard`. Run handler code as `with iam_guard("api"|"worker") as calls: ...`. The guard records every botocore call and fails at block exit on any operation outside §8.3, even one the handler swallowed.
+- **NumPy-free constants.** `ALGO_VERSION` (`qmc-sim/v1`) and `CHUNK_SIZE` (131,072) live in `qmc_core.params`; `qmc_core.sim` re-exports them (WS2 needs them without NumPy).
+- **Limiter.** `ddb.limiter_window(now)` returns the window start in epoch seconds (`floor(now / 10) * 10`), which is the item's `sk` and the first argument of `ddb.limiter_take(window, cap, now)`; `Retry-After = ceil(window + 10 - now)`.
+- **JOBLIST items** carry no `created_at` attribute; read it from the `sk` (`<created_at>#<job_id>`).
+- **Client seam (WS2 → WS4).** `clients.qmc.request(method, path, body=None, url=None) -> (status, headers, json_body)` returns on every HTTP status and resolves the URL like the CLI; the CLI commands use it. `FakeEntropySource(seed=b"qmc-fake-entropy", failures=())` (`failures`: `ErrorCode`, `(status, body)` or `None`, consumed one per request; `.calls` records them).
 - **Make arguments.** `make e2e ARGS=--fresh`; `make replay-check N=20` calls `tools/replay_many.py --n 20`. Every tool target passes `$(ARGS)`.
 
 ## 5. API contract (WS2)
@@ -597,17 +601,18 @@ The free-tier arithmetic for 100 jobs/day of 1M paths (PRIMER, "The free tier is
 | IAM completeness | WS0's operation allow-list test (QMC-105) over every moto test | G0+ |
 | Coverage ≥ 80% | CI `pytest --cov --cov-fail-under=80`; `qmc_core` ≥ 90% | G3 |
 
-## 12. Pinned versions (WS0 fills in: QMC-099, by Tue 2:00 PM; provisional values at G0a)
+## 12. Pinned versions (WS0, QMC-099)
 
 | Item | Value |
 | --- | --- |
 | Python | 3.13 (Lambda `python3.13`) |
-| NumPy | *(exact version and wheel hashes, `requirements/worker.txt`)* |
-| `NPY_DISABLE_CPU_FEATURES` | *(names valid for that NumPy; research value `X86_V4 AVX512_ICL AVX512_SPR`)* |
-| `exp` float64 target under that setting, in `public.ecr.aws/lambda/python:3.13` | *(recorded)* |
-| Terraform | ≥ 1.10 *(version used)* |
-| AWS provider | `~> 6.0` *(version locked)* |
-| tflint AWS ruleset | *(version)* |
+| NumPy | **2.5.4**, wheel `numpy-2.5.4-cp313-cp313-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl`, sha256 `6ffa07666f8da0eef81d149934a626d0d95fbd6838432a33e66245423a9062c0` (`requirements/worker.txt`, same pin in `pyproject.toml`) |
+| `NPY_DISABLE_CPU_FEATURES` | **`X86_V4 AVX512_ICL AVX512_SPR`**. NumPy 2.5 dispatches by feature *group*; in the Lambda image `np.show_runtime()` reports baseline `X86_V2`, dispatch targets `X86_V3`, `X86_V4`, `AVX512_ICL`, `AVX512_SPR`, so all three names are valid spellings. **Finding:** NumPy 2.5.4 silently ignores unknown names (`FOO`, `AVX512F` and `AVX2` all leave the target unchanged), so a typo would disable nothing; `tests/core/test_dispatch_lambda_image.py` asserts every listed name is a real dispatch group, and the fail-closed self-check remains the guard. The mechanism is proven by `NPY_DISABLE_CPU_FEATURES=X86_V3`, which drops `exp` to `baseline(X86_V2)` |
+| `exp` float64 target under that setting, in `public.ecr.aws/lambda/python:3.13` | **`X86_V3`** (AVX2 + FMA). `exp` and `maximum` have `X86_V4` kernels (disabled); `add`, `multiply` and `subtract` have only `X86_V3`/baseline, so every float64 ufunc in §7.3 runs `X86_V3` on any AVX2 Lambda host (asserted by the golden job). Measured locally under Docker amd64 emulation on Apple silicon (Python 3.13.16, no AVX-512 visible); CI's `golden` job on an x86 runner is authoritative |
+| Terraform | ≥ 1.10 (CI pins `hashicorp/terraform:1.16.5`) |
+| AWS provider | `~> 6.0`; WS1 locked **6.68.0** in `infra/.terraform.lock.hcl` |
+| tflint | `v0.64.0` (CI), AWS ruleset `0.49.0` (`infra/.tflint.hcl`, WS1) |
+| Checkov | `3.3.28` (CI, `allow_failure` until QMC-119) |
 
 ## 13. Conventions
 
