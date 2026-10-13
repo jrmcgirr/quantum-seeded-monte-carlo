@@ -29,7 +29,7 @@ def test_submit_records_queued_job_and_one_message_per_shard(app):
     assert item["status"] == "QUEUED"
     assert item["master_seed_hex"] == r.body["master_seed_hex"]
     assert item["params"] == {k: repr(float(SMALL_JOB[k])) for k in ("S0", "K", "r", "sigma", "T")}
-    assert item["seed_provenance"]["source"] == "qrypt"
+    assert item["seed_provenance"]["source"] == app.source.source == "fake"
 
     records = app.receive_all()
     assert sorted(shard_index(x) for x in records) == [0, 1, 2, 3]
@@ -45,3 +45,21 @@ def test_invalid_request_writes_nothing(app):
     assert {d["field"] for d in r.body["error"]["details"]} >= {"sigma", "shards"}
     assert app.table.scan()["Items"] == []
     assert app.receive_all() == []
+
+
+def test_qrypt_failure_rejects_and_writes_nothing(app):
+    """I1 fail closed: a Qrypt 401 names the cause, and no job, list entry or message exists.
+    (Only the limiter slot may be written: HANDOFF §7.5 step 2.)"""
+    import qmc_api.qrypt as qrypt
+
+    from qmc_core.errors import ErrorCode
+
+    failing = qrypt.FakeEntropySource(
+        seed=b"qmc-fail-closed", failures=[ErrorCode.QRYPT_AUTH_FAILED]
+    )
+    qrypt.set_entropy_source(failing)
+    r = app.call("POST", "/jobs", SMALL_JOB)
+    assert (r.status, r.body["error"]["code"]) == (503, "QRYPT_AUTH_FAILED")
+    assert [i["pk"] for i in app.table.scan()["Items"] if not i["pk"].startswith("RL#")] == []
+    assert app.receive_all() == []
+    assert failing.calls == 1  # 401 is never retried

@@ -118,8 +118,10 @@ def test_replay_is_bit_identical(app):
     app.run_all(app.receive_all())
     original = _assert_complete_and_exact(app, job_id)
 
+    calls = app.source.calls
     r = app.call("POST", f"/jobs/{job_id}/replay")
     assert r.status == 202, r.body
+    assert app.source.calls == calls  # a replay never calls Qrypt
     replay_id = r.body["job_id"]
     assert replay_id != job_id and r.body["replay_of"] == job_id
     app.run_all(app.receive_all())
@@ -127,6 +129,7 @@ def test_replay_is_bit_identical(app):
     view = app.get(replay_id)
     assert view["status"] == "COMPLETE"
     assert view["master_seed_hex"] == original["master_seed_hex"]
+    assert view["seed_provenance"] == {"source": "replay", "replay_of": job_id}
     assert view["result"]["estimate_hex"] == original["result"]["estimate_hex"]
     assert view["replay_check"]["bit_identical"] is True
     assert view["replay_check"]["shard_diffs"] == []
