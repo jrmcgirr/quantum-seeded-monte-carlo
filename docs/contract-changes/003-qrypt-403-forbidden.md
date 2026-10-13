@@ -1,7 +1,7 @@
 # 003 Qrypt 403 is QRYPT_FORBIDDEN, not QRYPT_QUOTA_EXHAUSTED
 
 - **Requested by:** WS4 (fail-closed drill finding), 2026-10-13 11:52 CT
-- **Status:** accepted 2026-10-13 by James; WS0 part on `ws0-foundation`, WS2 part pending, merged together
+- **Status:** done (MR !9, merged to main 2026-10-13)
 - **Affects:** WS0 (`qmc_core.errors`, `qmc_core.seeds`, `tests/core`, HANDOFF §5.3, §11, R2, WS2 prompt), WS2 (`src/qmc_api/qrypt.py` FakeEntropySource map, `tests/api`), WS4 (deployed fail-closed test, TEST_RESULTS), WS5 (docs quoting the code)
 
 ## Need
