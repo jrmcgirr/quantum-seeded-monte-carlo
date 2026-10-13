@@ -85,15 +85,16 @@ def test_forced_failure_three_attempts_then_partial_and_dlq(
 
     with iam_guard("worker"):
         complete_others(worker, ctx, msgs, FAILED)
-        for attempt in (1, 2, 3):
-            rec = queue.receive()
-            assert rec["attributes"]["ApproximateReceiveCount"] == str(attempt)
+    for attempt in (1, 2, 3):
+        rec = queue.receive()
+        assert rec["attributes"]["ApproximateReceiveCount"] == str(attempt)
+        with iam_guard("worker"):
             out = worker.handle(event(rec), ctx)
-            assert out == {"batchItemFailures": [{"itemIdentifier": rec["messageId"]}]}
-            job = job_item(ddb_table, item["job_id"])
-            if attempt < 3:
-                assert job["status"] == "QUEUED" and "failed_shards" not in job
-            queue.expire(rec)
+        assert out == {"batchItemFailures": [{"itemIdentifier": rec["messageId"]}]}
+        job = job_item(ddb_table, item["job_id"])
+        if attempt < 3:
+            assert job["status"] == "QUEUED" and "failed_shards" not in job
+        queue.expire(rec)
 
     assert visibility_calls == [5, 5, 5]
     assert job["status"] == "PARTIAL"

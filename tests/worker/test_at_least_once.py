@@ -48,7 +48,8 @@ def test_concurrent_duplicate_runs_between_put_and_mark_done(
 
     def mark_done(job_id, i):
         if not nested:
-            nested.append(worker.handle(event(record(msgs[0])), ctx))
+            nested.append(None)  # before the call: the nested worker hits this hook too
+            nested[0] = worker.handle(event(record(msgs[0])), ctx)
         return real_mark_done(job_id, i)
 
     monkeypatch.setattr(ddb, "mark_done", mark_done)
@@ -82,7 +83,8 @@ def test_crash_between_put_and_mark_done_then_redelivery(
         assert worker.handle(event(rec), ctx) == {
             "batchItemFailures": [{"itemIdentifier": rec["messageId"]}]
         }
-        assert job_item(ddb_table, item["job_id"])["status"] == "QUEUED"
+    assert job_item(ddb_table, item["job_id"])["status"] == "QUEUED"  # test read, outside the guard
+    with iam_guard("worker"):
         assert worker.handle(event(record(msgs[0], attempt=2)), ctx) == {"batchItemFailures": []}
 
     lines = stdout_lines(capsys)
