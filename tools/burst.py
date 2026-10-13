@@ -1,16 +1,19 @@
-"""make burst (QMC-143): 40 concurrent submits must never put more than CAP Qrypt calls in one
-WINDOW_S limiter window (contract change 005: 1 call per 1 s window), Qrypt must never answer 429,
-the overflow must be clean 429 ENTROPY_RATE_LIMITED, and never more than 30 calls in any rolling
-10 s (the assignment's limit). Spends one KiB per 202 (about 1–4 at cap 1).
+"""make burst (QMC-143): 40 concurrent submits against the Qrypt limiter of contract change 006
+(HANDOFF 1.13): one item ``RL#qrypt/LAST``, consecutive Qrypt calls at least ``QRYPT_MIN_GAP_MS``
+(2,000) apart, so at most ceil(10,000 / gap) = 5 in any rolling 10 s (assignment: 30), no retry
+on a Qrypt 429. Overflow must be 429 ENTROPY_RATE_LIMITED with Retry-After. No Qrypt 429 is
+expected; any that happens must fail closed (503 QRYPT_RATE_LIMITED, nothing written). About
+1–2 KiB per run.
 
-Evidence, three ways: the RL#qrypt limiter items (slots per window, exact), the API's
-``qrypt_call`` log lines (per-call timestamps), and the QryptLatencyMs SampleCount.
+``--recheck START END`` re-runs the server-side checks on an earlier burst today, without
+submitting.
 """
 
 from __future__ import annotations
 
 import argparse
 import datetime as dt
+import itertools
 import json
 import math
 import sys
@@ -42,18 +45,48 @@ def sample_check(t0: float, t1: float):
     return (n_metric, n_logs) if n_metric >= n_logs else None
 
 
-def qrypt_429_checks(check, lines, slots, t0, t1, http_503=None) -> None:
-    """HANDOFF 1.12 §11 (James's decision; R24): Qrypt may 429 a call that crosses a window
-    boundary, at most once per boundary, and each such submit must fail closed as 503
-    QRYPT_RATE_LIMITED with no job, JOBLIST or entropy item written."""
-    statuses = Counter(json.loads(e["message"]).get("http_status") for e in lines)
-    n429 = statuses.get(429, 0)
-    used = sum(1 for n in slots.values() if n)
+def qrypt_checks(check, lines, t0, t1, gap_ms, http_503=None) -> None:
+    """Server-side checks (log lines, the LAST item, DynamoDB) shared by a live run and --recheck."""
+    calls = sorted((json.loads(e["message"]) for e in lines), key=lambda c: c["ts"])
+    # A call's start is its log time minus its latency; the slot is taken a few ms before that.
+    starts = [
+        dt.datetime.fromisoformat(c["ts"].replace("Z", "+00:00")).timestamp()
+        - c["latency_ms"] / 1000
+        for c in calls
+    ]
+    gaps = [b - a for a, b in itertools.pairwise(starts)]
+    tol = 0.25  # slot-to-request delay: a few ms, up to ~100 ms on an SSM cache miss; stated, not tuned
     check(
-        "Qrypt 429s ≤ limiter windows used − 1",
-        n429 <= max(used - 1, 0),
-        f"{n429} Qrypt 429 in {used} windows; statuses {dict(statuses)}",
+        f"Qrypt calls ≥ {gap_ms / 1000:g} s apart (start to start, −{tol:g} s tolerance)",
+        all(g >= gap_ms / 1000 - tol for g in gaps),
+        f"{len(calls)} calls; gaps {[round(g, 3) for g in gaps]}",
     )
+    bound = math.ceil(10_000 / gap_ms)
+    rolling = max((sum(1 for u in starts if t <= u < t + 10) for t in starts), default=0)
+    check(f"≤ {bound} Qrypt calls in any rolling 10 s", rolling <= bound, f"max {rolling}")
+    check("≤ 30 Qrypt calls in any rolling 10 s (assignment)", rolling <= 30, f"max {rolling}")
+
+    # Guard: the LAST item must be the last call's slot (a changed key or attribute would
+    # otherwise leave the gap unchecked by the table).
+    item = (
+        aws("dynamodb")
+        .get_item(
+            TableName=outputs()["table_name"],
+            ConsistentRead=True,
+            Key={"pk": {"S": "RL#qrypt"}, "sk": {"S": "LAST"}},
+        )
+        .get("Item")
+    )
+    at = int(item["at_ms"]["N"]) / 1000 if item and "at_ms" in item else None
+    check(
+        "RL#qrypt/LAST at_ms = last call's slot (within 1 s before its start)",
+        at is not None and bool(starts) and starts[-1] - 1 <= at <= starts[-1] + 0.05,
+        f"at_ms {at} vs last start {starts[-1] if starts else None}",
+    )
+
+    statuses = Counter(c["http_status"] for c in calls)
+    n429 = statuses.get(429, 0)
+    check("no Qrypt 429 (expected under 006)", n429 == 0, dict(statuses))
     failed = [
         json.loads(e["message"])
         for e in log_events(
@@ -115,47 +148,29 @@ def qrypt_429_checks(check, lines, slots, t0, t1, http_503=None) -> None:
     )
 
 
-def recheck(start: str, end: str, w_s: int) -> int:
-    """Server-side checks on a past burst (no submits): ``--recheck 13:13:37Z 13:13:41Z``."""
+def recheck(start: str, end: str, gap_ms: int) -> int:
+    """Server-side checks on a past burst today (UTC ``HH:MM:SSZ``); no submits."""
     day = time.strftime("%Y-%m-%d", time.gmtime())
     t0, t1 = (
         dt.datetime.fromisoformat(f"{day}T{x.rstrip('Z')}+00:00").timestamp() for x in (start, end)
     )
     check = Checks()
-    table = outputs()["table_name"]
-    slots = {}
-    for w in range(int(t0 // w_s) * w_s, int(t1 // w_s) * w_s + w_s, w_s):
-        item = (
-            aws("dynamodb")
-            .get_item(
-                TableName=table,
-                ConsistentRead=True,
-                Key={"pk": {"S": "RL#qrypt"}, "sk": {"S": str(w)}},
-            )
-            .get("Item")
-        )
-        slots[w] = int(item["n"]["N"]) if item else 0
     lines = log_events(log_group("api"), '{ $.event = "qrypt_call" }', t0 - 1, t1 + 30)
-    used = {w: n for w, n in slots.items() if n}
-    print(f"recheck {start}–{end}: slots {used}, {len(lines)} qrypt_call lines")
-    qrypt_429_checks(check, lines, slots, t0, t1)
+    print(f"recheck {start}–{end}: {len(lines)} qrypt_call lines")
+    qrypt_checks(check, lines, t0, t1, gap_ms)
     return check.summary()
 
 
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=40)
-    ap.add_argument("--cap", type=int, default=1, help="QRYPT_MAX_PER_WINDOW (contract change 005)")
-    ap.add_argument("--window-s", type=int, default=1, help="QRYPT_WINDOW_S (contract change 005)")
     ap.add_argument(
-        "--recheck",
-        nargs=2,
-        metavar=("START", "END"),
-        help="re-run the server-side checks on a past burst today (UTC HH:MM:SSZ); no submits",
+        "--gap-ms", type=int, default=2000, help="QRYPT_MIN_GAP_MS (contract change 006)"
     )
+    ap.add_argument("--recheck", nargs=2, metavar=("START", "END"))
     args = ap.parse_args()
     if args.recheck:
-        return recheck(*args.recheck, args.window_s)
+        return recheck(*args.recheck, args.gap_ms)
     assert 1 <= args.n <= 40, "burst is capped at 40 submits (Qrypt quota)"
     check = Checks()
 
@@ -168,12 +183,11 @@ def main() -> int:
     print(f"{args.n} submits in {t1 - t0:.2f} s: {dict(codes)} {dict(errors)}")
     check(
         "only 202, 429 ENTROPY_RATE_LIMITED or 503 QRYPT_RATE_LIMITED",
-        set(codes) <= {202, 429, 503}
-        and set(errors) <= {"ENTROPY_RATE_LIMITED", "QRYPT_RATE_LIMITED"}
-        and all(
-            b["error"]["code"] == ("ENTROPY_RATE_LIMITED" if s == 429 else "QRYPT_RATE_LIMITED")
+        all(
+            s == 202
+            or (b.get("error") or {}).get("code")
+            == ("ENTROPY_RATE_LIMITED" if s == 429 else "QRYPT_RATE_LIMITED" if s == 503 else None)
             for s, _, b in results
-            if s != 202
         ),
         dict(errors),
     )
@@ -184,31 +198,8 @@ def main() -> int:
     )
     check("every 429 has Retry-After", None not in retry_after, dict(retry_after))
 
-    # Limiter windows (exact slot counts, written by the API).
-    w_s = args.window_s
-    table = outputs()["table_name"]
-    windows = range(int(t0 // w_s) * w_s, int(t1 // w_s) * w_s + w_s, w_s)
-    slots = {}
-    for w in windows:
-        item = (
-            aws("dynamodb")
-            .get_item(
-                TableName=table,
-                ConsistentRead=True,
-                Key={"pk": {"S": "RL#qrypt"}, "sk": {"S": str(w)}},
-            )
-            .get("Item")
-        )
-        slots[w] = int(item["n"]["N"]) if item else 0
-    check(
-        f"limiter: ≤ {args.cap} slots per {w_s} s window",
-        max(slots.values()) <= args.cap,
-        {w: n for w, n in slots.items() if n},
-    )
-
-    # qrypt_call log lines: one per HTTP attempt (HANDOFF §9.3). Every 202 and every 503 QRYPT_*
-    # reached Qrypt at least once, so wait for at least that many lines, then 30 s more for any
-    # retry's line (stopping at the first line count let a Qrypt 429 go unseen).
+    # One qrypt_call line per HTTP attempt (HANDOFF §9.3). Every 202 and every 503 QRYPT_* reached
+    # Qrypt, so wait for at least that many lines, then 30 s more (an early stop once hid a 429).
     reached = codes[202] + sum(n for c, n in errors.items() if (c or "").startswith("QRYPT_"))
     pattern = '{ $.event = "qrypt_call" }'
     poll(
@@ -219,32 +210,13 @@ def main() -> int:
     )
     time.sleep(30)
     lines = log_events(log_group("api"), pattern, t0 - 1, t1 + 30)
-    ts = sorted(e["timestamp"] / 1000 for e in lines)
-    per_window = Counter(int(t // w_s) * w_s for t in ts)
-    rolling = max(sum(1 for u in ts if t <= u < t + 10) for t in ts)
     check(
         "qrypt_call lines ≥ submits that reached Qrypt",
-        len(ts) >= reached,
-        f"{len(ts)} calls, {reached} submits reached Qrypt ({codes[202]} accepted)",
+        len(lines) >= reached,
+        f"{len(lines)} calls, {reached} submits reached Qrypt ({codes[202]} accepted)",
     )
-    # Guards: the slots read must cover the calls seen (a changed RL key format would otherwise
-    # make the slot check pass on zeros).
-    check(
-        "limiter slots ≥ Qrypt calls",
-        sum(slots.values()) >= len(ts),
-        f"{sum(slots.values())} vs {len(ts)}",
-    )
-    qrypt_429_checks(check, lines, slots, t0, t1, http_503=errors["QRYPT_RATE_LIMITED"])
-    # Fixed windows: a rolling 10 s interval can touch ceil(10 / w) + 1 windows at its edges.
-    bound = args.cap * (math.ceil(10 / w_s) + 1)
-    check(f"≤ {bound} Qrypt calls in any rolling 10 s", rolling <= bound, f"max {rolling}")
-    check("≤ 30 Qrypt calls in any rolling 10 s (assignment)", rolling <= 30, f"max {rolling}")
-    # Informational: a log line is stamped after its limiter slot, so a call near a boundary can
-    # land in the next window here. The exact per-window count is the RL#qrypt check above.
-    print(f"qrypt_call per fixed window (log timestamps): {dict(sorted(per_window.items()))}")
+    qrypt_checks(check, lines, t0, t1, args.gap_ms, http_503=errors["QRYPT_RATE_LIMITED"])
 
-    # QryptLatencyMs SampleCount vs qrypt_call lines over the same whole-minute buckets
-    # (EMF; minutes of lag possible).
     try:
         (n_metric, n_logs), secs = poll(
             "QryptLatencyMs SampleCount", lambda: sample_check(t0, t1), 600, 30
@@ -257,7 +229,7 @@ def main() -> int:
     except TimeoutError as e:
         check("QryptLatencyMs SampleCount = qrypt_call lines (same minutes)", False, e)
 
-    print(f"Qrypt spent: {len(ts)} KiB")
+    print(f"Qrypt spent: {codes[202]} KiB")
     return check.summary()
 
 
