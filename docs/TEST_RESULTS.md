@@ -53,7 +53,24 @@ GOLDEN_SUM_SQ_HEX = "0x1.f2c02fc1b1bcep+24"
 
 GitLab CI pipeline [52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736) on `main` ea3820c, job `golden`: `7 passed, 338 deselected`. That includes `test_golden_shard` and `test_exp_target_is_not_avx512`. The runner is James's Mac, so this is also the Lambda image under amd64 emulation, not native x86.
 
-Status: **checked under emulation and against real Lambda x86 by the e2e local recompute** (see `make e2e`). **Provisional:** they come from emulation. They become authoritative when a real x86 run agrees (a CI golden job, or `make e2e`'s local-recompute line against Lambda). Native macOS arm64 happens to give the same bits for this shard; that is not a guarantee.
+Status: **checked under emulation and against real Lambda x86 per shard** (below).
+
+### Real Lambda x86 vs emulated x86 vs arm64, per shard (WS1's risk)
+
+The concern: Rosetta-emulated x86 might dispatch or round differently from real Lambda hardware. The check reuses e2e job `edaff921…`, whose 10 shards (100k paths each, the golden shard's size) ran on real Lambda: `Intel(R) Xeon(R) Processor [@ 2.50GHz]`, exp_target X86_V3, dispatch enforced. The tool reads their stored `sum_hex`/`sum_sq_hex` and recomputes every shard from the stored master seed:
+
+```
+AWS_PROFILE=qmc uv run python tools/shard_crosscheck.py fetch edaff921aad7466490c53c4fcc4495da > job.json
+uv run python tools/shard_crosscheck.py check job.json                       # native macOS arm64
+docker run … public.ecr.aws/lambda/python:3.13 … tools/shard_crosscheck.py check job.json   # emulated x86 (see tool docstring)
+```
+
+```
+edaff921aad7466490c53c4fcc4495da: 10/10 shards bit-identical; here = arm64 exp=baseline(NEON NEON_FP16 NEON_VFPV4 ASIMD) cpu=arm
+edaff921aad7466490c53c4fcc4495da: 10/10 shards bit-identical; here = x86_64 exp=X86_V3 cpu=VirtualApple @ 2.50GHz
+```
+
+Every `sum_hex` and `sum_sq_hex`, 20 values, is identical across real Lambda x86, Rosetta-emulated x86 and native arm64. The environment that generated the golden constants therefore produces Lambda's bits for this workload. A native-x86 GitHub Actions golden run (WS0, in progress) is the remaining independent check. **Provisional:** they come from emulation. They become authoritative when a real x86 run agrees (a CI golden job, or `make e2e`'s local-recompute line against Lambda). Native macOS arm64 happens to give the same bits for this shard; that is not a guarantee.
 
 ## Deployed edge cases (QMC-143), build_sha c768aea
 
