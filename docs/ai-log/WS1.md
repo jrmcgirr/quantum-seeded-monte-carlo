@@ -68,3 +68,13 @@
   - Contract change 005 (HANDOFF 1.11, accepted by James): new root variable `qrypt_window_s` (default 1, integer 1–10) passed to the api module as `QRYPT_WINDOW_S`; `qrypt_max_per_window` default 10 → 1 (1–15 validation kept). `validate` and tflint clean. A `-lock=false` plan shows only qmc-dev-api's env changing (`QRYPT_MAX_PER_WINDOW` "10" → "1", plus `QRYPT_WINDOW_S` = "1"), with the sha bump once committed.
   - Deployment coupling: the API on main ignores `QRYPT_WINDOW_S` (10 s windows), so this must be applied together with WS2's limiter change; alone, cap 1 would mean 1 call per 10 s. Recorded in the commit message and the MR.
 - **Human checks:** James approved the push and MR; WS0 merges this with WS2's MR and applies from main.
+
+## 2026-10-13, about 8:20–8:45 AM CT, WS1 Infrastructure (contract changes 005 applied, 006)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - Contract change 005 applied by WS0 from main 6dcb3c2 at 13:13:06Z: as predicted, 2 changed, then a plan with no changes. Checked that WS2's limiter (a62f6f0, which reads `QRYPT_WINDOW_S`) was in the same main, so cap 1 never ran with 10 s windows.
+  - Found my 005 variable description said a rolling 10 s sees ≤ 10 calls; the bound with 1 s windows is 11 (HANDOFF 1.11). Fixed locally (642a0f3), held at James's request to ride with the next change, then made obsolete by 006, which deletes the variable. Dropped from the branch and kept as the local branch `ws1-infra-642a0f3-backup`.
+  - Contract change 006 (HANDOFF 1.13): new root variable `qrypt_min_gap_ms` (default 2000, integer 1000–10000) → api env `QRYPT_MIN_GAP_MS`; `qrypt_window_s`, `qrypt_max_per_window` and their env vars removed. First based on `origin/staging` (D42); James then dropped `staging` (WS0 fast-forwarded main to it), so it was rebased onto main d1e29bf and targets `main`. `validate` and tflint clean. A `-lock=false` plan shows qmc-dev-api `-QRYPT_WINDOW_S`, `-QRYPT_MAX_PER_WINDOW`, `+QRYPT_MIN_GAP_MS = "2000"`, plus the sha bump on both Lambdas (2 changed).
+  - Ordering risk is low: WS2's API on staging still reads the old variables, but `qmc_api/aws.py` defaults both to "1", so the API keeps working if this lands first.
+- **Human checks:** James chose to hold the description fix for the next change. The integrator promotes staging → main and applies.
