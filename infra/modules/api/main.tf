@@ -177,12 +177,13 @@ resource "aws_iam_role_policy" "client" {
   policy = data.aws_iam_policy_document.invoke.json
 }
 
-# Grader access (D26). The access key is created by CLI so it never enters state; force_destroy lets destroy
-# remove a user that has one.
+# Grader access (D26). The access key is created by CLI so it never enters state. force_destroy stays false: it
+# makes the provider call iam:DeleteLoginProfile, which the project SCP denies (iam:*LoginProfile*), and destroy
+# fails. So delete the grader's access key by CLI before any destroy, or DeleteUser fails with DeleteConflict.
 resource "aws_iam_user" "grader" {
   count         = var.create_grader_user ? 1 : 0
   name          = "${var.name}-grader"
-  force_destroy = true
+  force_destroy = false
 }
 
 # On the user, not a group: the new-AWS-experience Paid-plan SCP denies iam:CreateGroup, PutGroupPolicy and
