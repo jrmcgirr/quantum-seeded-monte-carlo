@@ -10,9 +10,9 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 2: distinct, reproducible shard seeds | `tests/correctness/test_seed_independence.py`, `tests/core/test_seeds.py` | PASS; max \|corr\| 0.02805 < 0.05 |
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
-| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (Docker + CI 52736, both emulated), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
+| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
-| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed 401 decoy drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); 401 drill **pending** |
+| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill: **fails closed (503, nothing written, alarm) but FAIL on the cause**: Qrypt returns 403, reported as QRYPT_QUOTA_EXHAUSTED (finding below) |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
@@ -53,7 +53,10 @@ GOLDEN_SUM_SQ_HEX = "0x1.f2c02fc1b1bcep+24"
 
 GitLab CI pipeline [52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736) on `main` ea3820c, job `golden`: `7 passed, 338 deselected`. That includes `test_golden_shard` and `test_exp_target_is_not_avx512`. The runner is James's Mac, so this is also the Lambda image under amd64 emulation, not native x86.
 
-Status: **checked under emulation and against real Lambda x86 per shard** (below).
+Status: **confirmed** in three independent environments:
+1. Emulated amd64: `make test-golden` and GitLab CI pipeline 52736 (`golden`, 7 passed).
+2. Native x86_64: GitHub Actions run [38392842904](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38392842904) on `main` d0af0b1, job `golden` on a GitHub-hosted `ubuntu-24.04` runner, `success`; all 7 jobs green. Verified with the public GitHub API.
+3. Real Lambda x86: per-shard cross-check (below).
 
 ### Real Lambda x86 vs emulated x86 vs arm64, per shard (WS1's risk)
 
@@ -70,7 +73,7 @@ edaff921aad7466490c53c4fcc4495da: 10/10 shards bit-identical; here = arm64 exp=b
 edaff921aad7466490c53c4fcc4495da: 10/10 shards bit-identical; here = x86_64 exp=X86_V3 cpu=VirtualApple @ 2.50GHz
 ```
 
-Every `sum_hex` and `sum_sq_hex`, 20 values, is identical across real Lambda x86, Rosetta-emulated x86 and native arm64. The environment that generated the golden constants therefore produces Lambda's bits for this workload. A native-x86 GitHub Actions golden run (WS0, in progress) is the remaining independent check. **Provisional:** they come from emulation. They become authoritative when a real x86 run agrees (a CI golden job, or `make e2e`'s local-recompute line against Lambda). Native macOS arm64 happens to give the same bits for this shard; that is not a guarantee.
+Every `sum_hex` and `sum_sq_hex`, 20 values, is identical across real Lambda x86, Rosetta-emulated x86 and native arm64. The environment that generated the golden constants therefore produces Lambda's bits for this workload. Native macOS arm64 happens to give the same bits; that is a bonus, not a guarantee.
 
 ## Deployed edge cases (QMC-143), build_sha c768aea
 
@@ -162,6 +165,29 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 ```
 
 Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
+
+## Fail-closed drill with a decoy token (QMC-143), build_sha d0af0b1, 2026-10-13
+
+Sequence:
+1. WS4 created the SecureString `/qmc/qrypt-api-key-invalid` at 11:50:07Z, with an obviously fake value.
+2. The integrator applied `-var qrypt_api_key_param_name=/qmc/qrypt-api-key-invalid` (live 11:50:43Z); `/health` → 200, ssm ok.
+3. WS4 ran `QMC_DRILL=fail-closed uv run pytest -m deployed tests/deployed/test_edge_cases.py::test_fail_closed_bad_token -s` twice. Qrypt: 0 KiB.
+
+```
+submit with the decoy token → 503 {'error': {'code': 'QRYPT_QUOTA_EXHAUSTED', 'message': 'Qrypt entropy quota exhausted (403).'}} at 11:51:10Z
+E       AssertionError: assert (503 == 503 and 'QRYPT_QUOTA_EXHAUSTED' == 'QRYPT_AUTH_FAILED'
+```
+
+API log (`FilterLogEvents`, `/aws/lambda/qmc-dev-api`):
+
+```
+{"ts":"2026-10-13T11:51:04.994Z","event":"qrypt_call","job_id":"ea88b6a3…","http_status":403,"latency_ms":203,"attempt":1,"outcome":"QRYPT_QUOTA_EXHAUSTED"}
+{"_aws":{…"SeedingFailures"…},"SeedingFailures":1,"cause":"QRYPT_QUOTA_EXHAUSTED","job_id":"ea88b6a3…"}
+{"ts":"2026-10-13T11:51:10.462Z","event":"qrypt_call","job_id":"5b11e097…","http_status":403,"latency_ms":86,"attempt":1,"outcome":"QRYPT_QUOTA_EXHAUSTED"}
+```
+
+- **Holds:** both submits got 503 and no job was written (neither id is in `GET /jobs`; `GET /jobs/{id}` → 404 for both). The 403 was not retried, per §7.5. `qmc-dev-seeding-failures` went OK → ALARM at 11:52:32Z.
+- **Finding (FAIL, reported to WS0):** Qrypt answers an invalid token with **HTTP 403, not 401**. Under HANDOFF §5.3, 403 maps to `QRYPT_QUOTA_EXHAUSTED`, so an invalid or expired token is reported to the operator as an exhausted quota: the wrong cause. The assertion has not been loosened; the fix is a contract decision (WS0).
 
 ## Fail closed on the live stack: secret failure (I1, I6), build_sha c768aea
 

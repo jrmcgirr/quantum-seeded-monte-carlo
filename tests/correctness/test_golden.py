@@ -17,9 +17,9 @@ SEED = frozen_seed("qmc-golden-test-v1")
 SHARD_INDEX = 0
 SHARD_PATHS = 100_000
 
-# PROVISIONAL (2026-10-13): `make test-golden` on Docker amd64 under Rosetta ("VirtualApple",
-# avx2+fma, exp → X86_V3, NumPy 2.5.4). Native macOS arm64 gives the same bits. Authoritative
-# once a real x86 CI golden job (or e2e on Lambda) agrees; never regenerate without James.
+# Generated 2026-10-13 with `make test-golden` (Lambda image, amd64 under Rosetta, exp → X86_V3,
+# NumPy 2.5.4). Confirmed on native x86_64 (GitHub Actions run 38392842904, ubuntu-24.04) and
+# against real Lambda shards (tools/shard_crosscheck.py). Never regenerate without James.
 GOLDEN_SUM_HEX: str | None = "0x1.fdcf3646e51c2p+19"
 GOLDEN_SUM_SQ_HEX: str | None = "0x1.f2c02fc1b1bcep+24"
 
