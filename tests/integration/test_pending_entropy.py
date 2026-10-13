@@ -89,7 +89,8 @@ def assert_pending_unseeded(app, job_id):
     item = app.job_item(job_id)
     assert item["status"] == "PENDING_ENTROPY"
     assert {"master_seed_hex", "seed_provenance", "deadline_at"}.isdisjoint(item), item
-    assert app.receive_all() == []  # no SQS message before a Qrypt-derived seed
+    # No SQS message for this job before a Qrypt-derived seed (other jobs' messages may exist).
+    assert all(json.loads(r["body"])["job_id"] != job_id for r in app.receive_all())
 
 
 @pytest.mark.parametrize("code", RETRYABLE_QRYPT)
@@ -141,7 +142,9 @@ def test_secret_unavailable_fails_fast(pending):
     boto3.client("ssm", region_name="us-east-2").delete_parameter(Name="/qmc/qrypt-api-key")
     r = pending.call("POST", "/jobs", QUEUE)
     assert r.body["error"]["code"] == "SECRET_UNAVAILABLE"
-    assert pending.invokes == [] and pending.table.scan()["Items"] == []
+    assert pending.invokes == []
+    # §7.5 takes the limiter slot (step 2) before reading SSM (step 3): only RL# may exist.
+    assert [i for i in pending.table.scan()["Items"] if not i["pk"].startswith("RL#")] == []
 
 
 def test_default_reject_is_unchanged(pending):
