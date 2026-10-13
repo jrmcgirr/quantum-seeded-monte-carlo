@@ -17,7 +17,10 @@ class ErrorCode(Enum):
     ROUTE_NOT_FOUND = (404, "No such route.")
     METHOD_NOT_ALLOWED = (405, "Method not allowed on this route.")
     JOB_NOT_REPLAYABLE = (409, "Only a COMPLETE job can be replayed.")
-    ENTROPY_RATE_LIMITED = (429, "The entropy rate limit is reached; retry after the window.")
+    ENTROPY_RATE_LIMITED = (
+        429,
+        "Qrypt calls are spaced at least 2 s apart; retry after the Retry-After seconds.",
+    )
     QRYPT_AUTH_FAILED = (503, "Qrypt rejected the token (401): invalid or expired.")
     # Qrypt sends the same 403 {"error": "Forbidden or entropy quota reached"} for a rejected token and an
     # exhausted quota, so the two cannot be told apart (contract change 003).
@@ -26,7 +29,7 @@ class ErrorCode(Enum):
         "Qrypt refused the request (403): the token is invalid or expired, "
         "or the entropy quota is used up.",
     )
-    QRYPT_RATE_LIMITED = (503, "Qrypt rate limit hit (429).")
+    QRYPT_RATE_LIMITED = (503, "Qrypt rate limit hit (429); not retried.")
     QRYPT_SERVER_ERROR = (503, "Qrypt server error (5xx).")
     QRYPT_ENTROPY_UNAVAILABLE = (503, "Qrypt entropy unavailable (503).")
     QRYPT_TIMEOUT = (503, "Qrypt did not answer within the deadline.")
