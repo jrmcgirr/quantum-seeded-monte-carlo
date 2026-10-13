@@ -12,17 +12,23 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from _common import Checks, call, log_events, log_group, wait
+from _common import Checks, aws, call, log_events, log_group, outputs, wait
 
 
-def cpu_models(node) -> set[str]:
-    if isinstance(node, dict):
-        return {v for k, v in node.items() if k == "cpu_model"} | {
-            m for v in node.values() for m in cpu_models(v)
-        }
-    if isinstance(node, list):
-        return {m for v in node for m in cpu_models(v)}
-    return set()
+def cpu_models(job_id: str) -> set[str]:
+    """From the shard items (the job view leaves ``cpu_model`` out); operator credentials."""
+    pages = (
+        aws("dynamodb")
+        .get_paginator("query")
+        .paginate(
+            TableName=outputs()["table_name"],
+            ConsistentRead=True,
+            KeyConditionExpression="pk = :p AND begins_with(sk, :s)",
+            ExpressionAttributeValues={":p": {"S": f"JOB#{job_id}"}, ":s": {"S": "SHARD#"}},
+            ProjectionExpression="fingerprint.cpu_model",
+        )
+    )
+    return {i["fingerprint"]["M"]["cpu_model"]["S"] for page in pages for i in page["Items"]}
 
 
 def reference_job() -> str:
@@ -62,7 +68,9 @@ def main() -> int:
             views = list(pool.map(lambda i: wait(i, timeout_s=300)[0], ids))
         for v in views:
             rc = v.get("replay_check") or {}
-            rows.append((b + 1, v["job_id"], v["status"], rc.get("bit_identical"), cpu_models(v)))
+            rows.append(
+                (b + 1, v["job_id"], v["status"], rc.get("bit_identical"), cpu_models(v["job_id"]))
+            )
             check(
                 f"replay {v['job_id'][:8]} bit-identical",
                 rc.get("bit_identical") is True,

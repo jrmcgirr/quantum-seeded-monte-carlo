@@ -8,9 +8,9 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | --- | --- | --- |
 | Core 1: submit returns an id; record has seed, params, QUEUED | `tests/integration/test_submit.py` (moto) | PASS (local, 2026-10-13) |
 | Core 2: distinct, reproducible shard seeds | `tests/correctness/test_seed_independence.py`, `tests/core/test_seeds.py` | PASS; max \|corr\| 0.02805 < 0.05 |
-| Core 3: progress then COMPLETE | `make e2e` | **pending** (blocked: SSM token parameter missing) |
+| Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
-| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (provisional), integration PASS; Lambda **pending** |
+| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (provisional), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure` | **pending** |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed 401 decoy drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); 401 drill **pending** |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed **pending** |
@@ -78,6 +78,36 @@ SKIPPED [1] tests/deployed/test_edge_cases.py:81: fail-closed drill only
 
 `GET /health` at that time: `503 {"checks": {"dynamodb": "ok", "ssm": "error: ParameterNotFound"}, "build_sha": "c768aea…"}`: the Qrypt token parameter (HANDOFF Day 0 step 0.4) had not been created yet.
 
+## `make e2e` (QMC-142), build_sha c768aea, 2026-10-13 11:26 UTC
+
+`AWS_PROFILE=qmc make e2e`, job `edaff921aad7466490c53c4fcc4495da`, replay `d6afc05874624db98a8b67710f56f2c2`. Qrypt: 1 KiB.
+
+| check | result | detail |
+| --- | --- | --- |
+| health 200                        | PASS | build_sha=c768aea3023263d046fadfb3e3fa9f64f5ddd2ae checks={'dynamodb': 'ok', 'ssm': 'ok'} |
+| GET /jobs is an array             | PASS | 2 jobs |
+| unknown id → 404                  | PASS | {'code': 'JOB_NOT_FOUND', 'message': "No job with id '00000000000000000000000000000000'."} |
+| submit 1M/10 → 202                | PASS | edaff921aad7466490c53c4fcc4495da |
+| progress observed before terminal | PASS | RUNNING:8/10 → COMPLETE:10/10 |
+| COMPLETE                          | PASS | 2.7 s submit → COMPLETE |
+| within 3 SE of Black-Scholes      | PASS | estimate=10.427494563625112 se=0.01470142633138016 bs=10.450583572185565 z=-1.5705284671031579 |
+| 1M paths counted once             | PASS | 1000000 |
+| replay → 202                      | PASS | d6afc05874624db98a8b67710f56f2c2 |
+| replay COMPLETE                   | PASS | COMPLETE |
+| replay bit-identical              | PASS | shards_compared=10 diffs=[] fingerprint_match=True |
+
+11/11 passed
+
+```
+INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09143f9adp+3
+```
+
+- Lambda fingerprint (both jobs): python 3.13.15, numpy 2.5.4, glibc 2.34, x86_64, exp_target X86_V3, fma true, avx2 true, avx512f false, dispatch_enforced true.
+- Shard `cpu_model`s: `Intel(R) Xeon(R) Processor @ 2.50GHz` (9 shards) and `Intel(R) Xeon(R) Processor` (1). Shard durations were 3–5 ms.
+- Cross-check of the provisional golden constants: real Lambda x86 (X86_V3) produced exactly the bits that native arm64 computes for this job, and Docker-emulated x86 produced exactly the arm64 bits for the golden shard.
+- **Risk, "progress observed":** a 1M/10 job completes in about 1–3 s. e2e makes its first GET immediately after the 202, in the same process, and saw `RUNNING:8/10`. WS2's separate-process `wait` saw COMPLETE on its first poll. A rerun can therefore miss the non-terminal state; if it does, the check fails visibly and is recorded, never loosened.
+- WS2's G1 run, for the record: job `5358ec35…` COMPLETE, z = 1.735; replay `f1df7275…` bit-identical, 10 shards, 0 diffs; submit REPORT 488.30 ms (Qrypt 310 ms on the first TLS connection). Commands are in `docs/ai-log/WS2.md` on `ws2-api`.
+
 ## Fail closed on the live stack: secret failure (I1, I6), build_sha c768aea
 
 WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on `ws2-api`, section "live checks"). The SSM parameter `/qmc/qrypt-api-key` did not exist yet, so this is the secret-failure form of I1. The Qrypt 401 decoy drill is still pending.
@@ -94,4 +124,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | Run | KiB |
 | --- | --- |
 | deployed edge cases | 0 |
-| **Total** | **0** |
+| make e2e (11:26 UTC) | 1 |
+| **Total** | **1** |
