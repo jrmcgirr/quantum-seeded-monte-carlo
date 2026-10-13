@@ -16,6 +16,6 @@ def frozen_seed(label: str) -> int:
     return int.from_bytes(hashlib.sha256(label.encode("ascii")).digest(), "big")
 
 
-def shard_item(master_int: int, i: int, shard_paths: int) -> dict:
-    r = simulate_shard(REFERENCE, shard_paths, master_int, i)
+def shard_item(master_int: int, i: int, shard_paths: int, variance_reduction: str = "none") -> dict:
+    r = simulate_shard(REFERENCE, shard_paths, master_int, i, variance_reduction=variance_reduction)
     return {"shard_index": i, "n": r.n, "sum_hex": to_hex(r.sum), "sum_sq_hex": to_hex(r.sum_sq)}
