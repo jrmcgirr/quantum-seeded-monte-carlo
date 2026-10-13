@@ -41,3 +41,13 @@ I1 reworded: "Seeded only from Qrypt. A seeding failure writes nothing — unles
 - **Backoff is clipped by the 10 s API timeout:** `PENDING_BACKOFF_MS` "2000,4000,8000" runs as 2, 4, 6, 6 s (each attempt must still fit the Qrypt deadline and the work reserve).
 - **Known limit (accepted, fail-safe):** an abandoned PENDING job past `pending_until` keeps counting toward `MAX_PENDING_ENTROPY` until a GET expires it or it ages out of the newest 50 JOBLIST entries; meanwhile new opt-in submits fail fast as before.
 - WS3's review found two seeder gaps (a QUEUED job without messages after a throttled re-read; a duplicate async delivery doubling the retry chain); fixed in MR !44.
+
+## Slot waits (2026-10-13, James: "wait for slot + jitter")
+
+WS4's burst drill (10 opt-in submits, build 581563d) seeded only 5: every seeder backed off on the same 2/4/6/6 s schedule and fought over one 2 s gap slot, so each attempt seeded one job (fail-closed held; no Qrypt 429). Change (WS2):
+
+- A refusal by **our own** limiter is not an attempt: the seeder waits `retry_after + uniform(0, 2)` s, in process if it fits the remaining time (minus the Qrypt deadline, margin and reserve), else re-invokes the **same** attempt.
+- Internal event gains optional `not_before_ms` (epoch ms) and `hop` (default 1): `{"qmc_seed", "attempt", "not_before_ms"?, "hop"?}`.
+- Lambda's recursive-loop detection drops a Lambda-only chain at ~16 invocations, so at `hop` 15 the job ends `FAILED` with `ENTROPY_RATE_LIMITED` instead of being dropped silently; normally `pending_until` (120 s) is reached first.
+- After every slot wait the seeder re-reads the job; a duplicate delivery behind a successful seed stops with `seed_skipped` and spends no Qrypt quota.
+- Attempts (≤ `PENDING_MAX_ATTEMPTS`) count only real Qrypt/network failures.
