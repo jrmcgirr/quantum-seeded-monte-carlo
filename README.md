@@ -162,6 +162,8 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 
 *TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
 
+**Replay ×20** (QMC-146, build `855e8d6`, `docs/TEST_RESULTS.md`): `make replay-check N=20` replayed the e2e reference job (1M paths, 10 shards) 20 times, in four batches of 5 spaced at least 10 minutes apart. **All 20 were bit-identical**, with `fingerprint_match` true and no shard diffs. The run covered 2 CPU model strings (`Intel(R) Xeon(R) Processor` and `… @ 2.50GHz`) and 17 distinct worker execution environments.
+
 First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…` bit-identically on Lambda: 10 shards, no diffs, `fingerprint_match: true`, across two reported Xeon CPU models (`docs/TEST_RESULTS.md`). WS2's replay `f1df7275…` of job `5358ec35…` returned `bit_identical: true`, `estimate_equal: true`, 10 shards compared, no shard diffs, `fingerprint_match: true` (`docs/ai-log/WS2.md`).
 
 ## Guardrails: Budget, alarms, limits and custom metrics
