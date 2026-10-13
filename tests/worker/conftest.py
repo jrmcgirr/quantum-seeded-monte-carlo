@@ -37,16 +37,21 @@ def ctx():
 def make_job(ddb_table):
     """Put a QUEUED job item; return ``(item, [ShardMessage, ...])``."""
 
-    def make(paths: int = 2000, shards: int = 10, fail_shards: list[int] | None = None):
+    def make(
+        paths: int = 2000,
+        shards: int = 10,
+        fail_shards: list[int] | None = None,
+        variance_reduction: str = "none",
+    ):
         job_id = uuid.uuid4().hex
         item = ddb.new_job_item(
             job_id=job_id,
             params=codec.params_to_repr(REF_PARAMS),
             paths=paths,
             shards=shards,
-            paths_per_shard=params.split_paths(paths, shards),
+            paths_per_shard=params.split_paths(paths, shards, variance_reduction),
             chunk_size=sim.CHUNK_SIZE,
-            variance_reduction="none",
+            variance_reduction=variance_reduction,
             algo_version=sim.ALGO_VERSION,
             # A fixed test seed: tests never touch Qrypt (CLAUDE.md, FakeEntropy rule).
             master_seed_hex=hashlib.sha256(job_id.encode()).hexdigest(),
@@ -86,7 +91,9 @@ def expected_result(item: dict) -> dict:
     master = seeds.master_int_from_hex(item["master_seed_hex"])
     shards = []
     for i, n in enumerate(item["paths_per_shard"]):
-        r = sim.simulate_shard(REF_PARAMS, int(n), master, i)
+        r = sim.simulate_shard(
+            REF_PARAMS, int(n), master, i, variance_reduction=item["variance_reduction"]
+        )
         shards.append(
             ddb.shard_put(
                 item["job_id"],
