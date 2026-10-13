@@ -1,5 +1,8 @@
 """Render the qmc-<env> CloudWatch dashboard's metric widgets to PNGs (read-only).
 
+BILLED: GetMetricWidgetImage is outside the CloudWatch free API requests (≈ $0.0006 for one full run,
+docs/COST.md). Do not re-run it; ask for a console screenshot instead.
+
     AWS_PROFILE=qmc uv run python docs/images/render_dashboard.py [--env dev] [--hours 6]
 
 Writes docs/images/dashboard-NN-<slug>.png per metric widget and docs/images/dashboard-alarms.md

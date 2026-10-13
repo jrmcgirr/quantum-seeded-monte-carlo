@@ -183,15 +183,18 @@ The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the fo
 
 **Qrypt rate limit.** The assignment requires that concurrent submissions never exceed Qrypt's 30 requests per 10 s. Our limiter enforces a **2 s minimum gap** between Qrypt calls, so at most 5 in any rolling 10 s (D10, contract change 006). Overflow is rejected with 429 `ENTROPY_RATE_LIMITED` and a `Retry-After` giving the seconds until the gap ends. A Qrypt 429 is not retried. Any submit that Qrypt itself refuses fails closed: a 503 naming the cause, no job written.
 
-Three earlier bursts of 40 concurrent submits, under the earlier limiters (WS4, `make burst`, `docs/TEST_RESULTS.md`), **never exceeded 30 per 10 s (measured max 15)**:
+Qrypt calls are spaced ≥ 2 s apart (≤ 5 per 10 s), and bursts overflow as 429 with `Retry-After`. There was no Qrypt 429 under 006 in the burst or the steady check below. All four bursts of 40 concurrent submits (WS4, `make burst`, `docs/TEST_RESULTS.md`) **never exceeded 30 per 10 s (measured max 15)**:
 
 | Run | Limiter | 202 | Our 429 (with `Retry-After`) | 503 `QRYPT_RATE_LIMITED` (Qrypt's own 429) | Max Qrypt calls in any 10 s |
 | --- | --- | --- | --- | --- | --- |
 | 12:01:50Z, build `d0af0b1` | 15 per 10 s | 15 | 25 | 0 | 15 |
 | 12:55:43Z, build `f3873f8` | 10 per 10 s (004) | 1 | 30 | 9 | 10 |
 | 13:13:37Z, build `6dcb3c2` | 1 per 1 s (005) | 1 | 38 | 1 | 2 (one 200, one 429; `qrypt_call` log lines) |
+| 13:35:56Z, build `e77a626` | **2 s minimum gap (006, current)** | 1 | 39 (`Retry-After` 1 or 2 s) | 0 | 1 |
 
-The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z, as a sliding limit. A call 1.19 s after the previous one was refused even with 1 s windows, and a steady 1.5 s pacing in `make bench` still drew 3 Qrypt 429s. That is why the limiter moved, step by step, to the 2 s gap (D10). *TBD: WS4's burst under the 2 s gap.*
+Steady check under 006 (13:36:48Z, 2.5 s pacing): 5 Qrypt calls, 2.49–3.03 s apart, all 200, max 4 in any rolling 10 s.
+
+The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z, as a sliding limit. A call 1.19 s after the previous one was refused even with 1 s windows, and a steady 1.5 s pacing in `make bench` still drew 3 Qrypt 429s. That is why the limiter moved, step by step, to the 2 s gap (D10).
 
 ## Why the worker fails closed at init
 
