@@ -113,7 +113,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - `tests/correctness/test_antithetic.py` runs 1M paths (500,000 pairs) with a seed label committed in `12ac8a7`, before antithetic was implemented, so the seed was not chosen to pass. Result: estimate 10.459606068881019, z = **+0.868** against Black-Scholes.
   - SE **0.010394543075244568** against 0.014693 for plain MC at the same 1M paths: a ratio of **0.707**, so the variance is about halved.
   - The golden antithetic shard (`0x1.fdeed45885d08p+18` / `0x1.efe11fda40dc7p+22`) passes on native x86 in [GitHub Actions run 38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576) (`61d8b42`).
-  - *TBD: a deployed antithetic job and its replay (WS4).*
+  - **Deployed** (build `61d8b42`, 2026-10-13 16:23Z, `tools/antithetic_drill.py`): job `166f446d9669459294ca69e125a1a097`, 500,000 pairs, z = −0.825, SE 0.0103974, **0.707×** the SE of the plain 1M job `56b4a94b…` (0.0147019). Its replay `e565b04f8a134168a37f226a6249cb55` was bit-identical, with no shard diffs (docs/TEST_RESULTS.md).
 
 ## D16 SQS parameters
 
@@ -156,15 +156,13 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 
 ## D21 Stretch goals *(amended 2026-10-13 by James, HANDOFF 1.17)*
 
-- **Done:** CloudWatch dashboard (QMC-118); replay diff report (core).
-- **Building:**
-  - Checkov as a blocking CI job (QMC-119).
-  - Per-job cost attribution (QMC-126).
-  - Antithetic variates (QMC-108).
-  - *TBD: each entry is updated as it lands, with its evidence.*
-- **Landed, drills pending:**
-  - An **optional Step Functions watcher, off by default** (QMC-127, contract change 007). MR !50; applied from `main` `581563d` at 18:09Z with it off, so no state machine exists in `dev`. Its two Checkov skips (`CKV_AWS_284`, `CKV_AWS_285`) bring Checkov to 140/0/22 (docs/SECURITY.md). Free up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day (docs/COST.md). *TBD: WS4's on/off drill.*
-  - **Opt-in PENDING_ENTROPY** via an async self-invoke with backoff (QMC-128, contract change 008). MR !51 and WS2's seeder; applied from `main` `581563d`. The deployed API has the self-invoke grant on its own ARN only, `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` 2000,4000,8000 (effective waits 2, 4, 6, 6 s, capped by the 10 s timeout), `PENDING_MAX_AGE_S` 120, `MAX_PENDING_ENTROPY` 10, and an event-invoke config with 0 retries. *TBD: WS4's PENDING burst drill.*
+- **Done** (all deployed at the G3 commit, `main` `8e0eac5`; evidence in docs/TEST_RESULTS.md):
+  - CloudWatch dashboard (QMC-118) and the replay diff report (core).
+  - Checkov as a blocking CI job (QMC-119, MR !37): 140 passed, 0 failed, 22 skipped (docs/SECURITY.md).
+  - Per-job cost attribution (QMC-126): with `WORKER_OVERHEAD_MS = 22` (calibrated from job `a8ac9809…`), fresh jobs `42dccdcc…` (mixed cold and warm) and `99d738cb…` (all warm) came within ±15% of billed worker GB-s, at **0.887×** and **1.015×** (docs/COST.md).
+  - Antithetic variates (QMC-108): deployed job `166f446d…`, SE **0.707×** the plain job's, replay `e565b04f…` bit-identical (D15).
+  - An **optional Step Functions watcher, off by default** (QMC-127, contract change 007). Switched on for the drill (`main` `b0ee345`, 18:16Z): job `266a3ade…` COMPLETE → execution SUCCEEDED in 10 s; forced job `c8f8a1f5…` PARTIAL → execution FAILED `JobNotComplete` in 20 s. Switched off again at 19:30Z; the plan showed no changes, `ListStateMachines` is empty and the API has no `SFN_ARN`. Free up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day (docs/COST.md).
+  - **Opt-in PENDING_ENTROPY** via an async self-invoke with backoff (QMC-128, contract change 008). The first burst drill (`581563d`) completed only 5 of 10 queued jobs: the seeders backed off in step and lost the 2 s limiter slot to each other, spending their attempts. James chose "wait for slot + jitter" (MR !57): a refusal by our own limiter no longer costs an attempt. Re-run (`effb192`, 19:42Z): **10/10 COMPLETE**, 10 Qrypt calls all 200, gaps 2.19–3.45 s, at most 5 in any rolling 10 s; replay of queued job `afaf4d85…` → `8876f9c9…` bit-identical.
 - **Parked, with reasons:** portfolio VaR (D45) and ephemeral per-branch environments (D46). James may revisit them later.
 - **Out:** CI deploys.
 - **Original choice (2026-10-12):** dashboard, Checkov in CI, cost attribution and antithetic variates. Not attempted then:
