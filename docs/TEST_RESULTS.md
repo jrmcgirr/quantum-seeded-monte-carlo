@@ -11,10 +11,10 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
 | Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (Docker + CI 52736, both emulated), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
-| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure` | **pending** |
+| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed 401 decoy drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); 401 drill **pending** |
-| Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed **pending** |
-| Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final` | integration PASS; deployed **pending** |
+| Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
+| Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
 | Burst vs 30 req/10 s | `make burst` | **pending** |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
@@ -114,6 +114,38 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 - **Risk, "progress observed":** a 1M/10 job completes in about 1–3 s. e2e makes its first GET immediately after the 202, in the same process, and saw `RUNNING:8/10`. WS2's separate-process `wait` saw COMPLETE on its first poll. A rerun can therefore miss the non-terminal state; if it does, the check fails visibly and is recorded, never loosened.
 - WS2's G1 run, for the record: job `5358ec35…` COMPLETE, z = 1.735; replay `f1df7275…` bit-identical, 10 shards, 0 diffs; submit REPORT 488.30 ms (Qrypt 310 ms on the first TLS connection). Commands are in `docs/ai-log/WS2.md` on `ws2-api`.
 
+## DLQ drill and duplicate delivery (QMC-144), build_sha f40a083, 2026-10-13
+
+- `make warm-dlq` at 11:26:20Z.
+- `make force-failure ARGS="--purge-first --duplicate"`, started 11:41:30Z (15 min 10 s after the warm-up). Forced-failure job `53d3b3e04a8f4b678285c1db7ea17e3b`; duplicate-drill job `84a31793e504490998ac42dc171be9a7`. Qrypt: 2 KiB.
+- Setup (approved by WS0): WS3's G1 forced failure had left 1 message in the DLQ and the alarm was ALARM. The purge brought the DLQ to 0 and the alarm to OK after 168 s, so the drill shows a fresh transition with depth exactly 1.
+
+| check | result | detail |
+| --- | --- | --- |
+| precondition: DLQ empty, alarm not ALARM | PASS | depth=0 alarm=OK |
+| submit with fail_shards=[3] → 202        | PASS | 53d3b3e04a8f4b678285c1db7ea17e3b |
+| job PARTIAL with [3]                     | PASS | PARTIAL failed=[3] at +13 s |
+| no result, partial over 9 shards         | PASS | {'estimate': 10.488724787774899, 'std_error': 0.049279063656201515, 'ci95': [10.392139597816888, 10.58530997773291], 'n': 90000, 'estimate_hex': '0x1.4fa3a22a879b8p+3', 'std_error_hex': '0x1.93b1afd8fd083p-5', 'ci95_hex': ['0x1.4c8c685782e25p+3', '0x1.52badbfd8c54bp+3']} |
+| DLQ depth 1                              | PASS | 1 at +23 s |
+| qmc-dev-dlq-depth ALARM                  | PASS | at +237 s after submit |
+| duplicate drill: submit → 202            | PASS | {'job_id': '84a31793e504490998ac42dc171be9a7', 'status': 'QUEUED', 'paths': 100000, 'shards': 4, 'master_seed_hex': '39967f3e4e4dfeba4496f748c36d01098d0f6dada0928b33cf79070a6be30abc', 'links': {'self': '/jobs/84a31793e504490998ac42dc171be9a7', 'replay': '/jobs/84a31793e504490998ac42dc171be9a7/replay'}} |
+| duplicate drill: COMPLETE                | PASS | COMPLETE |
+| worker logged duplicate_delivery         | PASS | after 11 s |
+| result and n unchanged                   | PASS | {'estimate': 10.485852909283137, 'std_error': 0.046811763589818804, 'ci95': [10.394103538594289, 10.577602279971986], 'n': 100000, 'estimate_hex': '0x1.4f8c1b6681337p+3', 'std_error_hex': '0x1.7f7b6235f69f7p-5', 'ci95_hex': ['0x1.4c9c7f063002dp+3', '0x1.527bb7c6d2641p+3']} |
+
+10/10 passed
+
+`aws cloudwatch describe-alarm-history --alarm-name qmc-dev-dlq-depth` (from 11:40Z):
+
+```
+11:44:08.034Z StateUpdate  Alarm updated from ALARM to OK          (setup purge)
+11:44:08.075Z Action       Successfully executed action arn:aws:sns:us-east-2:…:qmc-dev-alerts
+11:48:08.033Z StateUpdate  Alarm updated from OK to ALARM           (this drill)
+11:48:08.079Z Action       Successfully executed action arn:aws:sns:us-east-2:…:qmc-dev-alerts
+```
+
+Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
+
 ## Fail closed on the live stack: secret failure (I1, I6), build_sha c768aea
 
 WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on `ws2-api`, section "live checks"). The SSM parameter `/qmc/qrypt-api-key` did not exist yet, so this is the secret-failure form of I1. The Qrypt 401 decoy drill is still pending.
@@ -131,4 +163,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | --- | --- |
 | deployed edge cases | 0 |
 | make e2e (11:26 UTC) | 1 |
-| **Total** | **1** |
+| make force-failure --duplicate (11:41 UTC) | 2 |
+| **Total** | **3** |
