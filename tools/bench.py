@@ -19,6 +19,7 @@ import re
 import statistics
 import sys
 import time
+from collections import Counter
 
 from _common import REFERENCE, call, log_events, log_group, wait
 
@@ -47,23 +48,24 @@ def submits(n: int, pace_s: float = 1.5) -> None:
     rows = []
     for k in range(3 + n):
         t0 = time.monotonic()
-        status, headers, _ = call("POST", "/jobs", SMALL)
+        status, headers, body = call("POST", "/jobs", SMALL)
         ms = (time.monotonic() - t0) * 1000
         rid = next((v for h, v in headers.items() if h.lower() == "x-request-id"), None)
         if k >= 3:
-            rows.append((status, ms, rid))
+            rows.append((status, ms, rid, (body.get("error") or {}).get("code")))
         time.sleep(max(0.0, pace_s - (time.monotonic() - t0)))
     time.sleep(15)  # REPORT lines reach CloudWatch Logs within seconds
     rep = reports("api", t_start - 5)
     ok = [r for r in rows if r[0] == 202]
-    client = [ms for _, ms, _ in ok]
-    server = [rep[rid][0] for _, _, rid in ok if rid in rep]
+    client = [ms for _, ms, _, _ in ok]
+    server = [rep[rid][0] for _, _, rid, _ in ok if rid in rep]
+    failed = Counter(f"{r[0]} {r[3]}" for r in rows if r[0] != 202)
     print(
         f"\n## Submit latency (warm), {n} submits after 3 warm-ups, paced {pace_s * 1000:.0f} ms\n"
     )
     print(
-        f"statuses: { {s: sum(r[0] == s for r in rows) for s in sorted({r[0] for r in rows})} } "
-        f"(429s counted, not dropped)\n"
+        f"accepted (202): {len(ok)} of {n}; **excluded from p50/p95:** {dict(failed) or 'none'} "
+        "(a Qrypt 429 → 503 QRYPT_RATE_LIMITED is counted here, never in the latency sample)\n"
     )
     print(
         "| measure | n | p50 ms | p95 ms | max ms | target |\n| --- | --- | --- | --- | --- | --- |"
