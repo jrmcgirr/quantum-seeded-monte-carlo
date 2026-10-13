@@ -4,6 +4,8 @@
 **Serverless Monte Carlo option pricing on AWS, seeded by Qrypt quantum entropy, replayable bit for bit, at $0/month.**
 
 > **Status: skeleton (QMC-150).** Headings are final; text marked *TBD* is filled in from G1–G3 evidence (TEST_RESULTS, BENCHMARKS, `terraform state list`). Nothing below the quick-start has been run yet.
+>
+> **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov, and a guard against `data "aws_ssm_parameter"`.
 
 ## What it does and for whom
 
@@ -153,7 +155,7 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 
 *TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
 
-First live evidence (G1, 2026-10-13): replay `f1df7275…` of job `5358ec35…` returned `bit_identical: true`, `estimate_equal: true`, 10 shards compared, no shard diffs, `fingerprint_match: true` (`docs/ai-log/WS2.md`).
+First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…` bit-identically on Lambda: 10 shards, no diffs, `fingerprint_match: true`, across two reported Xeon CPU models (`docs/TEST_RESULTS.md`). WS2's replay `f1df7275…` of job `5358ec35…` returned `bit_identical: true`, `estimate_equal: true`, 10 shards compared, no shard diffs, `fingerprint_match: true` (`docs/ai-log/WS2.md`).
 
 ## Guardrails: Budget, alarms, limits and custom metrics
 
