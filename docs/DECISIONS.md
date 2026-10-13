@@ -148,11 +148,25 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** S3 remote state (cents per month, not $0, and a bootstrap problem); state inside the repo checkout (each worktree would have its own state).
 - **Why:** one operator, graded project; a state path outside the worktrees lets the integrator and WS1 apply the same stack from different checkouts, one at a time.
 
-## D21 Stretch goals
+## D21 Stretch goals *(amended 2026-10-13 by James, HANDOFF 1.17)*
 
-- **Chose:** CloudWatch dashboard, Checkov in CI, per-job cost attribution, antithetic variates; the replay diff report is core. *(James)*
-- **Not attempted:** Step Functions (≈ $0.31/month at 100 jobs/day), PENDING_ENTROPY (second mapped queue breaks $0), ephemeral per-branch environments (needs remote state, doubles metrics), portfolio VaR, CI deploys.
-- **Why:** each chosen item is low effort and shows judgement; each skipped one costs money or a day. *(review)* The dashboard is cut last, because it is the visible evidence for the assignment's "custom metrics" (EMF metrics are not Terraform resources).
+- **Done:** CloudWatch dashboard (QMC-118); replay diff report (core).
+- **Building:**
+  - Checkov as a blocking CI job (QMC-119).
+  - Per-job cost attribution (QMC-126).
+  - Antithetic variates (QMC-108).
+  - An **optional Step Functions watcher, off by default** (QMC-127, contract change 007).
+  - **Opt-in PENDING_ENTROPY** via an async self-invoke with backoff (QMC-128, contract change 008).
+  - *TBD: each entry is updated as it lands, with its evidence.*
+- **Parked, with reasons:** portfolio VaR (D45) and ephemeral per-branch environments (D46). James may revisit them later.
+- **Out:** CI deploys.
+- **Original choice (2026-10-12):** dashboard, Checkov in CI, cost attribution and antithetic variates. Not attempted then:
+  - Step Functions, ≈ $0.31/month at 100 jobs/day if always on.
+  - PENDING_ENTROPY as a second mapped queue, which breaks $0.
+  - Ephemeral environments.
+  - Portfolio VaR.
+  - CI deploys.
+- **Why the amendment:** Step Functions and PENDING_ENTROPY were brought back in forms that keep $0 by default: the watcher is off unless enabled, and PENDING_ENTROPY uses a self-invoke rather than a second mapped queue (007, 008). The dashboard is still the visible evidence for the assignment's "custom metrics" (EMF metrics are not Terraform resources).
 
 ## D22 Timeline
 
@@ -316,6 +330,24 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:**
   - Keep `force_destroy = true` (destroy always fails here).
   - Manage the access key in Terraform. Its secret would then enter state (D26).
+
+## D45 Portfolio VaR: parked *(James, 2026-10-13; QMC-129, #55)*
+
+- **Decision:** not built. James may revisit it later.
+- **What it would take** (2026-10-13 research relayed by WS0, issue #55):
+  - **A different fan-in.** Our shards return `{sum, sum_sq, n}`, which add up exactly in any order because `math.fsum` makes the result independent of order. A VaR is a **quantile**, and quantiles do not add. Reproducible fan-in would need a **fixed-edge histogram per shard**: counts plus a per-bin `fsum`. The VaR is then known to within one bin width, and expected shortfall only to within bounds (Acerbi–Tasche).
+  - **Correlated assets.** These need a Cholesky factor of the correlation matrix, computed in pure Python with `math.fsum`. `@`, `np.dot` and `np.einsum` are out, because BLAS picks SIMD kernels by CPU, which would break bit-identical replay (D2, I5; PRIMER, "Pricing the option is trivial…").
+  - **Effort:** ≈ 43 h. It reopens every interface (request schema, SQS message, shard item, aggregation, replay compare) before G4. A minimal version (histogram, ≤ 10 assets, ≤ 2M paths, a single-asset closed-form check) is ≈ 1.5 days.
+- **Why parked:** it cannot land inside the timebox without reopening the frozen contract, and a partial version would weaken the bit-identical replay guarantee the project rests on.
+
+## D46 Ephemeral per-branch environments: parked *(James, 2026-10-13; QMC-129, #55)*
+
+- **Decision:** not built. James may revisit it later.
+- **Why** (2026-10-13 research relayed by WS0, issue #55):
+  - **No OIDC.** CI needs AWS credentials. The project SCP's `DenyIAMRestrictedActions` denies `iam:*Provider*` ([SCPs and RCPs for projects](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html)), so no GitHub or GitLab OIDC identity provider can be created. The only option would be a **long-lived, effectively admin-equivalent access key stored in the CI of a public repository**.
+  - **Free-tier limits.** Each environment would bring its own alarms and EMF metrics. The free tier counts ≤ 10 of each per account, across all environments (I7, HANDOFF §10), and dev already uses 8 metrics and 7 alarms.
+  - **State.** Per-branch state would need GitLab-managed Terraform state or HCP; today it is local, outside every worktree (D20, D33).
+- **Fallback, if ever wanted:** a manually triggered GitLab review environment with a 1 h auto-stop, no alarms or EMF metrics, and a 2 RCU / 2 WCU table, still inside the shared 25/25 DynamoDB allowance.
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
