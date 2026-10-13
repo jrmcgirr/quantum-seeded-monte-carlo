@@ -107,6 +107,11 @@ def main() -> int:
     )
     ap.add_argument("--keep", action="store_true", help="do not purge the DLQ afterwards")
     ap.add_argument("--no-warm-check", action="store_true")
+    ap.add_argument(
+        "--purge-first",
+        action="store_true",
+        help="setup: purge leftover DLQ messages and wait for the alarm to return to OK",
+    )
     args = ap.parse_args()
     check = Checks()
 
