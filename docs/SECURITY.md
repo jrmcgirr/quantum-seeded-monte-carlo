@@ -20,7 +20,7 @@
 
 ## Logs and redaction
 
-*TBD*
+*TBD: `qmc_core.logjson` redaction (keys like `authorization`, `token`, `api_key`, `secret`, `block`), no request headers logged, the `qrypt_call` event (HANDOFF 1.3 §9.3) carrying status and latency but never the token or block; 14-day retention.*
 
 ## Fault injection on the graded stack
 
