@@ -253,7 +253,7 @@ plan exit 0
 Checked independently by WS4 afterwards (GET only): `/health` 200 at c1ab7ed; `GET /jobs` lists only the two e2e jobs (56b4a94b COMPLETE, z = −1.387, n = 1,000,000; replay 35ab0933 COMPLETE, `bit_identical: true`, 10 shards), consistent with an empty list at 15:34:22Z.
 
 Caveats, stated so nobody overreads this:
-1. **Not one uninterrupted run.** The first destroy failed because of the SCP. After the fix it was finished with a targeted state-only apply plus destroy, and steps 3–6 were run by hand. The one-shot form `make drift-check` has not yet run cleanly from start to finish on the fixed code.
+1. **Not one uninterrupted run.** The first destroy failed because of the SCP. After the fix it was finished with a targeted state-only apply plus destroy, and steps 3–6 were run by hand. The one-shot form `make drift-check` has not yet run cleanly from start to finish on the fixed code. Per the integrator (WS0), the planned confirmation is the G4 final sequence (HANDOFF §2): `make destroy`, then a fresh-clone apply from empty, which exercises the same fixed code end to end. Its result is to be added here.
 2. **The apply time of 65 s is for 33 resources into an empty account/region**, measured with `SECONDS` around `make apply` (which includes `make build` and `terraform init`).
 3. e2e's non-terminal observation was `QUEUED:0/10`, which meets the spec's "`progress.done < total`" but is not `RUNNING`.
 4. The SNS email subscription is `PendingConfirmation` until James confirms it (R12). Until then, alarm emails are dropped.
