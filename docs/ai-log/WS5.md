@@ -55,3 +55,19 @@
   - James made the rulings recorded as D10 (004–006), D21, D40, D42, D43 and D45/D46.
   - WS0 reviewed and merged every MR.
   - James confirmed the Mermaid diagrams render in GitLab's viewer (QMC-150 acceptance). WS5 checked the public GitHub copy of `docs/ARCHITECTURE.md` in a headless browser (Playwright): all three diagrams render as Mermaid viewer frames, including the replay sequence once scrolled into view.
+
+## 2026-10-13 12:55–15:25 CT, WS5 Docs (QMC-126/127/128/108 docs, QMC-151, 153, 154, 156)
+
+- **Tool and model:** Claude Code, Opus 5.5, with one general-purpose sub-agent that folded `docs/ai-log/WS0–WS5.md` into `AI_USAGE.md`. Tasks came from the WS0 integrator session.
+- **Asked:** document the stretch features as they landed (cost attribution, Step Functions watcher, PENDING_ENTROPY, antithetic), then the G4 docs: README quick-start and API reference, the remaining COST and SECURITY figures, DEMO_SCRIPT, AI_USAGE.
+- **Produced:**
+  - MRs !49 (cost cross-check), !53 (007/008 docs: Checkov 140/0/22, IAM re-check, diagrams, cost, README, D21), !59 (G3 stretch evidence), !64 (README quick-start, API reference, guardrails, security summary; SECURITY log scan; COST idle, storage, Budget; DEMO_SCRIPT), and this AI_USAGE consolidation.
+- **How it was verified:**
+  - Checkov re-run myself on MR !50's head and on `main` `581563d`.
+  - Read-only AWS calls only: `GetFunctionConfiguration`, `GetFunctionEventInvokeConfig`, `ListStateMachines`, `GetRolePolicy`, `GetFunctionUrlConfig`, `DescribeAlarms`, `GetFunctionConcurrency`, `ListEventSourceMappings`, `GetMetricStatistics`, `DescribeTable`, `DescribeBudget`; the Price List API for Step Functions' us-east-2 price ($0.000025 a transition). Two signed `GET /jobs/{id}` calls for the `cost_estimate` example (no Qrypt).
+  - Every drill figure checked against TEST_RESULTS at `8e0eac5`; the API reference against `qmc_core.errors`, `params`, the handler and the deployed limits; the seed chain against `seeds.py`.
+  - Mermaid re-rendered with mermaid-cli after each diagram change.
+  - Spot-checked the sub-agent's AI_USAGE figures against TEST_RESULTS.
+- **Mistakes made and fixed:** !53 first said the PENDING_ENTROPY backoff was 2, 4, 8 s, read from the environment variable only; the code caps each wait to fit the 10 s timeout, so it is 2, 4, 6, 6 s. WS0 pointed it out; fixed in !53 before merge.
+- **Found for others:** HANDOFF still said "nothing is written" (I1), "no Step Functions" (I7, §10) and "No PENDING_ENTROPY queue" (D10) after 007/008, fixed by WS0 in 1.18; HANDOFF §5.3's 429 and `QRYPT_RATE_LIMITED` rows still describe pre-006 behaviour (reported to WS0).
+- **Human checked or changed:** WS0 reviewed and merged every MR. *Pending: the fresh-clone rehearsal with James, the Qrypt token's expiry date and the video.*
