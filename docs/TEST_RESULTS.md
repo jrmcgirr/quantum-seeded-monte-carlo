@@ -10,7 +10,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 2: distinct, reproducible shard seeds | `tests/correctness/test_seed_independence.py`, `tests/core/test_seeds.py` | PASS; max \|corr\| 0.02805 < 0.05 |
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
-| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
+| Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); replay ×20 **20/20 bit-identical** (855e8d6), 2 CPU model strings, 17 execution environments |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run 12:08 PASS (855e8d6): 503 QRYPT_FORBIDDEN, alarm OK→ALARM 12:09:32Z, SNS OK |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
@@ -165,6 +165,47 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 ```
 
 Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
+
+## Replay ×20 across Lambda hosts (QMC-146), build_sha 855e8d6, 2026-10-13
+
+`AWS_PROFILE=qmc make replay-check N=20 ARGS="--job edaff921aad7466490c53c4fcc4495da"`: four batches of 5 concurrent replays of the e2e reference job (1M paths, 10 shards), each polled every 2 s. No configuration changes. During the gap after batch 1, the fail-closed drill's two applies changed only the API function and its role (the worker was untouched; checked in the plan). Qrypt: 0 KiB (replays never call Qrypt).
+
+| batch | started (UTC, from `created_at`) | replays | result |
+| --- | --- | --- | --- |
+| 1 | 12:07:35 | 9cdb38e3 669fe1c3 822906d6 ad028b33 2095e2c0 | 5/5 bit-identical |
+| 2 | 12:34:01 | 7b92288d d67d596b ef162eec 348c8858 573fb87a | 5/5 bit-identical |
+| 3 | 12:44 | 207a6cd8 a2677831 afae2bec 35df52de cd07737c | 5/5 bit-identical |
+| 4 | 12:54 | 3a367403 721530a0 1b426bcf 203c527c 0024864f | 5/5 bit-identical |
+
+- Every replay reports `fp_match=True diffs=[]`. Final line: `PASS  all 20 bit-identical  20/20`, `25/25 passed`.
+- The 26 min gap between batches 1 and 2 (rather than 10) comes from the laptop being suspended for a few minutes before 12:35Z (macOS suspends `time.sleep`). The rule is ≥ 10 min, so the run stands, and longer gaps recycle more environments. `bit_identical` is computed server-side on `GET`, so a client poll that slept through the suspend cannot change it.
+- Hardware seen (shard `cpu_model` from DynamoDB, plus the worker log streams that logged these replays' job ids):
+
+```
+distinct CPU models (2):
+  Intel(R) Xeon(R) Processor
+  Intel(R) Xeon(R) Processor @ 2.50GHz
+distinct worker execution environments (log streams): 17
+  2026/10/13/[$LATEST]02b1acc8d589454fbbd5a864007afc51
+  2026/10/13/[$LATEST]0c65a445bad141ada0cece15627e987f
+  2026/10/13/[$LATEST]2dc0e55aa32d4624bee092c9284948b9
+  2026/10/13/[$LATEST]395f5e19fd8c47bea9309f54ae8d8dcb
+  2026/10/13/[$LATEST]3a1024cdaf00474487c0e6e86242370c
+  2026/10/13/[$LATEST]54058a0334924fc08dac024e1e54e35e
+  2026/10/13/[$LATEST]89d5c74ac29b4e9e87fff1c9969619e6
+  2026/10/13/[$LATEST]b3530a492b4847d58f8a792e5db66de2
+  2026/10/13/[$LATEST]cdd7ea080751479595208a1feeb9e87a
+  2026/10/13/[$LATEST]d636a4c7627a4d0e973661fbc962a603
+  2026/10/13/[$LATEST]dcfdee48767e4fdc8d61bd2c2ddd06ff
+  2026/10/13/[$LATEST]dd45d3d570514743b15a7df5bbac186d
+  2026/10/13/[$LATEST]e1a820ec053b4e64acd8eaa7506a6649
+  2026/10/13/[$LATEST]e20f177c72c24433bca989a83ce8ee4f
+  2026/10/13/[$LATEST]e5887355148a4215ad38067901148208
+  2026/10/13/[$LATEST]e5bad8aab4ab4fbca15c54027c5ded76
+  2026/10/13/[$LATEST]fe23c9d2df704f3e9f12f0c368b67b6c
+```
+
+Both CPU strings are the same Xeon family at X86_V3 with AVX-512 masked (fingerprint `avx512f: false`, `dispatch_enforced: true`). Lambda never placed these shards on a host with a different `exp` path, so this run shows bit-identity across 17 execution environments and two reported CPU models; it does not show it across microarchitectures.
 
 ## Burst (QMC-143), build_sha d0af0b1, 2026-10-13 12:01:50Z
 
