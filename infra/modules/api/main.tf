@@ -171,28 +171,20 @@ resource "aws_iam_role_policy" "client" {
   policy = data.aws_iam_policy_document.invoke.json
 }
 
-# Grader access (D26): the policy sits on a group, not the user (CKV_AWS_40). The access key is created by CLI
-# so it never enters state; force_destroy lets destroy remove a user that has one.
-resource "aws_iam_group" "graders" {
-  count = var.create_grader_user ? 1 : 0
-  name  = "${var.name}-graders"
-}
-
-resource "aws_iam_group_policy" "graders" {
-  count  = var.create_grader_user ? 1 : 0
-  name   = "${var.name}-invoke"
-  group  = aws_iam_group.graders[0].name
-  policy = data.aws_iam_policy_document.invoke.json
-}
-
+# Grader access (D26). The access key is created by CLI so it never enters state; force_destroy lets destroy
+# remove a user that has one.
 resource "aws_iam_user" "grader" {
   count         = var.create_grader_user ? 1 : 0
   name          = "${var.name}-grader"
   force_destroy = true
 }
 
-resource "aws_iam_user_group_membership" "grader" {
+# On the user, not a group: the new-AWS-experience Paid-plan SCP denies iam:CreateGroup, PutGroupPolicy and
+# AddUserToGroup (DenyIAMRestrictedActions).
+resource "aws_iam_user_policy" "grader" {
+  #checkov:skip=CKV_AWS_40:IAM groups are denied by the project's managed SCP; the user has only this invoke policy
   count  = var.create_grader_user ? 1 : 0
+  name   = "${var.name}-invoke"
   user   = aws_iam_user.grader[0].name
-  groups = [aws_iam_group.graders[0].name]
+  policy = data.aws_iam_policy_document.invoke.json
 }
