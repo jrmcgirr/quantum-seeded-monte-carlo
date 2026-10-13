@@ -90,4 +90,4 @@ Nothing is billed per hour: no NAT, load balancer, EC2, RDS or API Gateway. Prov
 
 ## Budget configuration
 
-*TBD: `docs/images/budget.png`, a console screenshot of the `qmc-monthly` Budget ($1.00 monthly cost budget; alerts on actual > 1%, actual > 100% and forecast > 100%, to SNS and email).*
+*TBD: `docs/images/budget.png`, a console screenshot of the `qmc-monthly` Budget ($1.00 monthly cost budget; alerts on actual > 1%, actual > 100% and forecast > 100%, published to the `qmc-dev-alerts` SNS topic only, whose email subscription is confirmed; D43). To be taken after WS1's apply that removes the direct email subscriber..*

@@ -292,6 +292,13 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Unprotected `main` with direct integrator pushes, the original flow (D23).
 - **Why:** protection makes "every change passed CI" a rule that GitLab enforces, rather than a convention.
 
+## D43 Budget alerts through SNS only *(James, 2026-10-13)*
+
+- **Chose:** the `qmc-monthly` Budget's notifications (actual > 1%, actual > 100%, forecast > 100%) publish **only** to the SNS topic `qmc-dev-alerts`, which emails James through its confirmed subscription. The direct email subscriber on the Budget is removed (WS1).
+- **Why:** in the new AWS experience, a Budget's direct email recipient goes through AWS User Notifications and must be verified there. James's AWS-managed sign-in cannot do that: it lacks the `notifications-contacts:*` permissions. The SNS path already delivers the same alerts. This is also why the topic is unencrypted (D17): Budgets cannot publish to a topic that uses the AWS-managed SNS key.
+- **Alternatives:** keep the direct email subscriber (it cannot be verified with this sign-in); grant the `notifications-contacts` permissions (IAM permissions for human access are managed by AWS in this experience).
+- *TBD: cite WS1's merge request and the apply.*
+
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).
