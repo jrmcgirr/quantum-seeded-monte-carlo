@@ -94,6 +94,20 @@ run 2 warm:  invocation_ms 3–6                        vs  billed 20–50 ms
 - The ±15% assertion has not been loosened.
 - Submit, reported only: billed 0.215 GB-s (cold) and 0.090 GB-s (warm), against the flat 0.125.
 
+### Cost validation with `WORKER_OVERHEAD_MS = 22` (James chose (a)), main 581563d, 2026-10-13 ~18:10Z
+
+Fix: `qmc_core.cost.WORKER_OVERHEAD_MS = 22`, added per shard that recorded `invocation_ms`. It was calibrated by WS0 from run 2 above (a8ac9809), so it is validated only on fresh jobs. Applied 18:09:39Z (MR !52). Same command and same ±15% acceptance, not loosened. Environments come from each shard item's `init_ms` (0 = warm). Qrypt: 2 KiB.
+
+| run | job | environments | estimate (worker) | REPORT billed (worker) | ratio | result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3, mixed | `42dccdcc800d4d2e800ccc0c36cf353a` | 5 fresh (right after the apply; `init_ms` 687–707), 5 warm | 5.34 GB-s | 6.021 GB-s | **0.887×** | PASS |
+| 4, all warm | `99d738cb3c864dbebc4680adcff33b24` | all 10 warm (`init_ms` 0, `invocation_ms` 4–5) | 0.263 GB-s | 0.259 GB-s | **1.015×** | PASS |
+
+- The warm case was 0.170× before the fix and is 1.015× after it.
+- The mixed case moved from 0.856× to 0.887×. Its remaining 11% gap comes from the cold invocations: their post-put work bills more than the 22 ms calibrated on warm ones. That is within tolerance.
+- Submit, reported only: billed 0.232 GB-s (run 3, cold API) and 0.096 GB-s (run 4), against the flat 0.125.
+- The tool's detail text "finalize after the last put is not counted" predates the overhead constant, which now covers that work on average.
+
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
 Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
@@ -629,4 +643,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | idle cold submit (15:55 UTC) | 1 |
 | antithetic + cost drill (16:23 UTC) | 1 |
 | cost re-runs after 009 (16:36, 16:37 UTC) | 2 |
-| **Total** | **92** |
+| cost validation with WORKER_OVERHEAD_MS (~18:10 UTC) | 2 |
+| **Total** | **94** |
