@@ -80,3 +80,36 @@ uv run python clients/qmc.py wait f1df7275ea874eb5a3c6db396353c2da
   Earlier cold inits were 83.84 ms and 295.72 ms.
 - **Worker REPORT:** 17–45 ms per 100k-path shard, 121 MB of 1,024 MB.
 - **Observation for e2e:** a 1M/10 job completes in about 1 s, so `wait` started from a separate process saw COMPLETE on its first poll. Observing a non-terminal state needs a poll immediately after the 202.
+
+## 2026-10-13, about 07:00 to 08:35 CT: contract changes 003 to 006 (MRs !9, !10, !12, !15, !18)
+
+- **Workstream:** WS2 API (`ws2-api`)
+- **Tool and model:** Claude Code, Claude Opus 5.5 (`claude-opus-5-5`)
+- **Asked (by WS0, from James's decisions):** implement each contract change in the API as WS0 froze it.
+- **Produced:**
+  - 003 (!9): Qrypt 403 maps to `QRYPT_FORBIDDEN`, fail fast, no retry.
+  - 004 (!10): limiter cap default 10.
+  - 005 (!15): one Qrypt call per 1 s window.
+  - 006 (!18): replaced the window by a 2 s minimum gap between Qrypt calls (`limiter_gap_take`, Retry-After from the refused item's `at_ms`); a Qrypt 429 is never retried; the 5xx retry takes a fresh gap slot.
+  - !12: fixed limiter tests that depended on the wall clock (fake clock in `test_submit.py`; `QRYPT_MIN_GAP_MS=0` in the conftest for clock-independent tests).
+- **Verified:** `make test` green on each MR's pipeline; the parametrised gap tests (0, 0.5, 1.2, 1.999 s → 429 with Retry-After 2, 2, 1, 1; 2.0 s → 202).
+- **Human checked or changed:** *(James: fill in at review)*
+
+## 2026-10-13, about 11:00 to 14:40 CT: #52 coverage and the stretch items (MRs !33, !43, !44, !57)
+
+- **Workstream:** WS2 API (`ws2-api`)
+- **Tool and model:** Claude Code, Claude Opus 5.5 (`claude-opus-5-5`)
+- **Asked (by WS0):** #52 (`handler.py` to 100%); then QMC-128 PENDING_ENTROPY (contract change 008), QMC-127 Step Functions watcher (007), QMC-126 cost estimate in the job view, QMC-108 client `--antithetic` / `--queue`; then fix WS3's review findings and WS4's burst-drill result.
+- **Produced:**
+  - !33: `handler.py` at 100%; dropped a dead branch in `_json_default`.
+  - !43: `qmc_api/pending.py`, the async self-invoked seeder (`{"qmc_seed", "attempt"}`, backoff from `PENDING_BACKOFF_MS`, conditional on `status = PENDING_ENTROPY`, never raises); submit's opt-in `on_entropy_failure: "queue"` with the `MAX_PENDING_ENTROPY` cap; GET's expiry backstop; `start_watch` (`ExecutionAlreadyExists` is success, other failures are logged and never change the response); `cost_estimate`, `entropy_attempts`, `last_entropy_error`, `pending_until`, `fail_reason` in the view.
+  - !44, from WS3's review of !43: publish the `pending_to_queued` ALL_NEW item (no read between QUEUED and enqueue); re-invoke only when `entropy_attempts == attempt + 1`, else log `duplicate_seeder`; a JOBLIST failure while queueing fails the pending job. WS3 re-ran its probes and found nothing further.
+  - !57, from WS4's live burst drill (5 of 10 seeded: seeders on one backoff schedule fought over the 2 s gap and each refusal spent an attempt): a refused slot is no longer an attempt. The seeder waits `retry_after` plus 0 to 2 s of jitter, in process when it fits, else re-invokes the same attempt with `not_before_ms` and `hop + 1`; hop 15 fails the job (`ENTROPY_RATE_LIMITED`) because Lambda's recursion detection drops about the 16th self-invoke in a Lambda-only chain (checked in the Lambda developer guide, "invocation-recursion"). Duplicate delivery was accepted as harmless: the seeder re-reads the job after every wait.
+  - A discrete-event test clock (`Sim` in `tests/api/test_stretch.py`: a thread per seeder, one running at a time, `_sleep` advances a fake clock) for the burst test.
+- **Verified:**
+  - Burst of 10 in moto: 10/10 QUEUED, `entropy_attempts` all 1, max hop below 16. With `pending.py` reverted to the pre-!57 version, the same test fails with job 5 FAILED, as the live drill did.
+  - WS4's `tests/integration/test_pending_entropy.py` passed unchanged on !57's branch; WS4's 3 new slot-wait tests fail on the old seeder.
+  - `make test` on `main` 2fbd97e: 426 passed; `qmc_api` modules 94 to 100% covered.
+  - Live (WS4, reported by WS0): G3 tagged `g3-proven` on `main` 2fbd97e, deployed code 8e0eac5; every stretch item verified live, the PENDING burst 10/10.
+- **Not done:** abandoned PENDING jobs count against `MAX_PENDING_ENTROPY` until a GET expires them (accepted by WS0 as a documented limit).
+- **Human checked or changed:** *(James: fill in at review)*
