@@ -1,6 +1,11 @@
 locals {
   function_name = "${var.name}-api"
+  # Built from the name, not aws_lambda_function.api.arn, which goes unknown during an in-place update and would
+  # make every build_sha bump re-plan the invoke policies.
+  function_arn = "arn:aws:lambda:${data.aws_region.current.region}:${var.account_id}:function:${local.function_name}"
 }
+
+data "aws_region" "current" {}
 
 # Created before the function, with retention, so Lambda never creates a never-expiring group that survives destroy.
 resource "aws_cloudwatch_log_group" "api" {
@@ -33,7 +38,8 @@ resource "aws_iam_role" "api" {
 }
 
 # HANDOFF §8.3. The only "*" is the log-stream suffix on this function's own log group.
-# No kms:Decrypt: the aws/ssm key policy authorizes account principals through SSM (checked at G1).
+# No kms:Decrypt: the aws/ssm key policy authorizes account principals through SSM. Verified at G1: GetParameter
+# with WithDecryption succeeded with ssm:GetParameter alone (WS2, job 5358ec35af8a450d9eba939da9f610d9).
 data "aws_iam_policy_document" "api" {
   statement {
     sid = "Table"
@@ -127,7 +133,7 @@ data "aws_iam_policy_document" "invoke" {
   statement {
     sid       = "InvokeFunctionUrl"
     actions   = ["lambda:InvokeFunctionUrl"]
-    resources = [aws_lambda_function.api.arn]
+    resources = [local.function_arn]
 
     condition {
       test     = "StringEquals"
@@ -139,7 +145,7 @@ data "aws_iam_policy_document" "invoke" {
   statement {
     sid       = "InvokeViaFunctionUrl"
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.api.arn]
+    resources = [local.function_arn]
 
     condition {
       test     = "Bool"

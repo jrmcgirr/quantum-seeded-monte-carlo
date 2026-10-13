@@ -22,9 +22,20 @@
 - **Open:**
   - The SNS subscription is PendingConfirmation (James).
   - QMC-115's test alarm email: run after confirmation.
-  - `kms:Decrypt`: not yet tested; it needs WS2's submit path (`GetParameter` with `WithDecryption`).
+  - `kms:Decrypt`: not needed (job 5358ec35, HANDOFF 1.6 §8.3); see the follow-up entry below.
   - `make e2e` timing from empty belongs to the drift check.
 - **Human checks and changes:**
   - James approved installing terraform 1.16.5 (HashiCorp tap), tflint 0.64.0 (GitHub release, checksum verified) and checkov 3.3.28 (pipx).
   - James approved writing `~/.qmc/dev.tfvars` (mode 600) and the first apply.
   - The auto-mode classifier blocked removing `aws:SourceAccount` from the Lambda trust policies. They were kept, and Lambda accepted them.
+
+## 2026-10-13, about 6:20–6:30 AM CT, WS1 Infrastructure (follow-up)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - Rebased and re-applied with the real handlers from main (c768aea): 2 Lambdas changed, then a plan with no changes. MR !3 (stack) and MR !4 (ruff format fix) are merged.
+  - QMC-115 test: James confirmed the SNS subscription; `SetAlarmState` on `qmc-dev-dlq-depth` gave ALARM at 11:24:02 UTC and OK at 11:25:08 UTC, and the alarm history shows both SNS actions executed. `qmc-dev-seeding-failures` fired at 11:18:32 UTC on WS2's real fail-closed submits (an EMF metric with no dimensions, as designed).
+  - Signed `/health` → 200 once James created `/qmc/qrypt-api-key` (Standard SecureString, `alias/aws/ssm`). His first `put-parameter` with `file:///dev/stdin` failed with an empty value; a temp-file variant (mode 600, `rm -P`) worked.
+  - **`kms:Decrypt`: not needed.** WS2's live submit (job `5358ec35af8a450d9eba939da9f610d9`, 202, Qrypt HTTP 200) decrypted the token with `ssm:GetParameter` alone. The conditional KMS statement stays out.
+  - G1 run on this stack (reported by WS2): COMPLETE within 3 SE (z 1.735); replay bit-identical (10 shards, `fingerprint_match` true); worker `exp_target` X86_V3 with `dispatch_enforced` true.
+- **Human checks:** James approved the push, MR !3, the re-apply, MR !4 and the test alarm; he created the token parameter himself.
