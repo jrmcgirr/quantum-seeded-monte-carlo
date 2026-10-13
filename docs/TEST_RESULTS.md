@@ -11,17 +11,18 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
 | Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); replay ×20 **20/20 bit-identical** (855e8d6), 2 CPU model strings, 17 execution environments |
-| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
+| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; **alarm email received** ([screenshot](images/dlq-alarm-email.png)) |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run 12:08 PASS (855e8d6): 503 QRYPT_FORBIDDEN, alarm OK→ALARM 12:09:32Z, SNS OK |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker shard duration | PASS: paths-per-shard 400; 100k-path shard 3–5 ms vs the 10 s timeout |
 | Burst vs 30 req/10 s | `make burst` | **006 (e77a626): PASS 11/11**: 1 × 202, 39 × 429 with Retry-After 1–2, no Qrypt 429, LAST item matches; steady spot check: 5 calls 2.49–3.03 s apart, all 200. Earlier, under 005: **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
-| Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
+| Cost runaway | `tests/deployed` MAX_PATHS 400; live configuration (read-only Lambda API, c1ab7ed) | PASS: MAX_PATHS 400 (c768aea). Live: exactly **1** event source mapping on `qmc-dev-worker` (`MaximumConcurrency` 5, batch 1, `ReportBatchItemFailures`), worker **reserved concurrency 10**; API env `MAX_PATHS` 10000000, `MAX_SHARDS` 50, `MAX_PATHS_PER_SHARD` 1000000, `QRYPT_MIN_GAP_MS` 2000 |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
-| Clean teardown, no drift | `make drift-check` (integrator) | step 1 plan = 0 PASS (372583c); **FINDING: destroy blocked by the SCP** (`iam:DeleteLoginProfile` on the grader user), partially destroyed; WS1 fixing (`force_destroy = false`); remaining steps **pending** |
-| Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed 404 PASS; fresh list **pending** |
-| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); apply time **pending** (#34); 2 Qrypt 429 → 503 at 1.5 s pacing (R24) |
+| Clean teardown, no drift | `make drift-check` (integrator) | **PASS after a fix** (372583c → c1ab7ed): plan 0 → destroy blocked by the SCP (FINDING, fixed by MR !28) → destroy finished → **0 orphans** → apply from empty **65 s** → `e2e --fresh` 12/12 → plan 0 |
+| Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed after apply from empty (c1ab7ed): `GET /jobs` → `[]` PASS, unknown id → 404 PASS |
+| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); 2 Qrypt 429 → 503 at 1.5 s pacing (R24); apply from empty 65 s; idle cold submit 2.4 s client / 1.6 s server (reported separately) |
+| IAM completeness (QMC-105) | WS0's `iam_guard` allow-list fixture (`tests/conftest.py`, self-tested in `tests/core/test_iam_guard.py`), used by `tests/api/*`, `tests/worker/*` and every `tests/integration` handler call | PASS: CI `unit` job, 320 passed (pipeline 52736). Any AWS operation outside HANDOFF §8.3 fails the test, even one a handler swallowed |
 | Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
 
 ## CI (GitLab pipeline 52736, main ea3820c)
@@ -164,7 +165,13 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 11:48:08.079Z Action       Successfully executed action arn:aws:sns:us-east-2:…:qmc-dev-alerts
 ```
 
-Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
+Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Alarm email (screenshot `docs/images/dlq-alarm-email.png`, James's inbox, checked by WS4 against the alarm history above):**
+- Subject `ALARM: "qmc-dev-dlq-depth" in US East (Ohio)`, from AWS Notifications `<no-reply@sns.amazonaws.com>`, received 6:48 AM CT (11:48 UTC).
+- "State Change: OK -> ALARM", "Threshold Crossed: 1 datapoint [1.0 (13/10/26 11:46:00)] was greater than the threshold (0.0)", "Timestamp: Tuesday 13 October, 2026 11:48:08 UTC".
+- Metric `AWS/SQS` `ApproximateNumberOfMessagesVisible`, `QueueName = qmc-dev-shards-dlq`, period 60 s, Maximum, notBreaching. Actions on `arn:aws:sns:us-east-2:…:qmc-dev-alerts`.
+- The same thread shows two earlier deliveries: 6:24 AM CT (11:24Z, reason "WS1 QMC…": WS1's `set-alarm-state` test, QMC-115) and 6:30 AM CT (11:30Z, a threshold crossing from WS3's G1 forced failure).
+
+![DLQ alarm email](images/dlq-alarm-email.png)
 
 ## Replay ×20 across Lambda hosts (QMC-146), build_sha 855e8d6, 2026-10-13
 
@@ -207,7 +214,58 @@ distinct worker execution environments (log streams): 17
 
 Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
 
-## Drift check (QMC-145, #34): finding, destroy blocked by the SCP, 2026-10-13 15:18Z
+## Drift check (QMC-145, #34): end to end, 2026-10-13 15:18–15:34Z
+
+Run by the integrator (WS0) from `main`. This is the raw output as WS0 sent it, ANSI codes stripped. WS0 truncated the error in step 2; the full text ends "…eleteLoginProfile on resource: user qmc-dev-grader with an explicit deny in a service control policy … p-057ovv87".
+
+```
+=== 15:18:52Z  1/6 plan at build_sha 372583c5e53811beab74abab57fa6fa326e7589e (expect no changes)
+PASS: plan shows no changes
+=== 15:18:58Z  2/6 destroy
+│ Error: removing IAM User (qmc-dev-grader) login profile: deleting IAM User (qmc-dev-grader) login profile: operation error IAM: DeleteLoginProfile, https response error StatusCode: 403 … AccessDenied … explicit deny in a service control policy (p-057ovv87)
+exit=2
+[fix: MR !28 force_destroy=false, merged to main c1ab7ed]
+=== 15:32:40Z 2a/6 targeted apply: grader force_destroy true -> false (state only)
+module.api.aws_iam_user.grader[0]: Modifications complete after 0s [id=qmc-dev-grader]
+Apply complete! Resources: 0 added, 1 changed, 0 destroyed.
+=== 15:32:47Z 2b/6 destroy (finish)
+module.api.aws_iam_user.grader[0]: Destruction complete after 1s
+Destroy complete! Resources: 1 destroyed.
+=== 15:32:53Z 3/6 orphan scan (bash tools/drift_check.sh --orphans-only)
+none: tagged Project=qmc Env=dev
+none: log groups /aws/lambda/qmc-dev-*
+none: SNS topic qmc-dev-alerts
+none: SNS subscriptions on qmc-dev-alerts
+none: DynamoDB table qmc-dev
+none: SQS queues qmc-dev-*
+none: alarms qmc-dev-*
+none: IAM roles/users qmc-dev-*
+none: Lambda functions qmc-dev-*
+none: event source mappings
+none: budget qmc-monthly
+PASS: no orphans
+=== 15:33:06Z 4/6 apply from empty (timed)
+Apply complete! Resources: 33 added, 0 changed, 0 destroyed.
+apply from empty: 65 s (target < 600 s)
+/health: {"status":"ok","checks":{"dynamodb":"ok","ssm":"ok"},"build_sha":"c1ab7ed0964f067e6445a10b32e92f503fa2cdec","env":"dev"}
+=== 15:34:22Z 5/6 make e2e --fresh — 12/12 passed
+job 56b4a94b62c048ec9f46cbcd298ca454, replay 35ab0933048148d7a797a6b1675b2d78, Qrypt 1 KiB
+fresh: GET /jobs empty [] PASS; unknown id → 404 JOB_NOT_FOUND PASS; progress QUEUED:0/10 → COMPLETE:10/10 PASS; COMPLETE 2.9 s; z=-1.387 within 3 SE PASS; 1M counted once PASS; replay bit-identical shards_compared=10 diffs=[] fingerprint_match=True PASS
+INFO local recompute (arm64) matches Lambda: 0x1.4dc4132e9385dp+3 vs 0x1.4dc4132e9385dp+3
+=== 15:34:37Z 6/6 plan (expect no changes)
+No changes. Your infrastructure matches the configuration.
+plan exit 0
+```
+
+Checked independently by WS4 afterwards (GET only): `/health` 200 at c1ab7ed; `GET /jobs` lists only the two e2e jobs (56b4a94b COMPLETE, z = −1.387, n = 1,000,000; replay 35ab0933 COMPLETE, `bit_identical: true`, 10 shards), consistent with an empty list at 15:34:22Z.
+
+Caveats, stated so nobody overreads this:
+1. **Not one uninterrupted run.** The first destroy failed because of the SCP. After the fix it was finished with a targeted state-only apply plus destroy, and steps 3–6 were run by hand. The one-shot form `make drift-check` has not yet run cleanly from start to finish on the fixed code. Per the integrator (WS0), the planned confirmation is the G4 final sequence (HANDOFF §2): `make destroy`, then a fresh-clone apply from empty, which exercises the same fixed code end to end. Its result is to be added here.
+2. **The apply time of 65 s is for 33 resources into an empty account/region**, measured with `SECONDS` around `make apply` (which includes `make build` and `terraform init`).
+3. e2e's non-terminal observation was `QUEUED:0/10`, which meets the spec's "`progress.done < total`" but is not `RUNNING`.
+4. The SNS email subscription is `PendingConfirmation` until James confirms it (R12). Until then, alarm emails are dropped.
+
+### Finding: destroy blocked by the SCP (fixed), 2026-10-13 15:18Z
 
 The integrator ran `make drift-check` from `main` 372583c, with the deployed build_sha equal to the checkout:
 - **Step 1, plan:** no changes. PASS.
@@ -478,5 +536,7 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | burst at cap 10 (12:55 UTC; 1 × 200, 9 × Qrypt 429) | 1 |
 | burst at 1 s cap 1 (13:13 UTC; 1 × 200, 1 × Qrypt 429) | 1 |
 | make bench (13:20 UTC; 58 submits, 56 × 200) | 56 |
+| drift-check e2e --fresh (integrator, 15:34 UTC) | 1 |
 | 006 burst + steady spot check (13:35–13:37 UTC) | 1 + 5 |
-| **Total** | **87** |
+| idle cold submit (15:55 UTC) | 1 |
+| **Total** | **89** |
