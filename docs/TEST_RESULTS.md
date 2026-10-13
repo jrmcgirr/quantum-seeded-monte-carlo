@@ -15,13 +15,13 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run 12:08 PASS (855e8d6): 503 QRYPT_FORBIDDEN, alarm OK→ALARM 12:09:32Z, SNS OK |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
-| Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
+| Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker shard duration | PASS: paths-per-shard 400; 100k-path shard 3–5 ms vs the 10 s timeout |
 | Burst vs 30 req/10 s | `make burst` | **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
 | Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed 404 PASS; fresh list **pending** |
-| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | **pending** |
+| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); apply time **pending** (#34); 2 Qrypt 429 → 503 at 1.5 s pacing (R24) |
 | Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
 
 ## CI (GitLab pipeline 52736, main ea3820c)
@@ -411,4 +411,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | burst: aborted attempt (12:01:11) + run (12:01:50) | 5 + 15 |
 | burst at cap 10 (12:55 UTC; 1 × 200, 9 × Qrypt 429) | 1 |
 | burst at 1 s cap 1 (13:13 UTC; 1 × 200, 1 × Qrypt 429) | 1 |
-| **Total** | **25** |
+| make bench (13:20 UTC; 58 submits, 56 × 200) | 56 |
+| **Total** | **81** |
