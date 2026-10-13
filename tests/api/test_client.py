@@ -76,3 +76,14 @@ def test_wait_prints_each_change_until_terminal(monkeypatch, capsys):
     assert qmc.main(["--url", URL, "wait", "abc"]) == 0
     err = capsys.readouterr().err.splitlines()
     assert [line.split()[2] for line in err] == ["QUEUED", "RUNNING", "COMPLETE"]
+
+
+def test_missing_crt_is_a_clear_exit(monkeypatch):
+    from botocore.exceptions import MissingDependencyException
+
+    def boom(self):
+        raise MissingDependencyException(msg="needs crt")
+
+    monkeypatch.setattr(qmc.Session, "get_credentials", boom)
+    with pytest.raises(SystemExit, match="botocore\\[crt\\]"):
+        qmc.request("GET", "/health", url=URL)

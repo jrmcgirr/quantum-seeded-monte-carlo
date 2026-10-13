@@ -28,6 +28,7 @@ from urllib.parse import urlsplit
 
 from botocore.auth import SigV4Auth
 from botocore.awsrequest import AWSRequest
+from botocore.exceptions import MissingDependencyException
 from botocore.session import Session
 
 POLL_S = 2.0  # 10 RCU: never poll faster
@@ -58,6 +59,20 @@ def _region(url: str) -> str:
     return parts[parts.index("lambda-url") + 1]
 
 
+def _credentials():
+    try:
+        creds = Session().get_credentials()
+        frozen = creds.get_frozen_credentials() if creds else None
+    except MissingDependencyException:
+        raise SystemExit(
+            "These credentials (aws login) need the AWS CRT: run `uv sync` in this repo, "
+            "or `pip install 'botocore[crt]'`."
+        ) from None
+    if frozen is None:
+        raise SystemExit("No AWS credentials found (profile, environment or instance role).")
+    return frozen
+
+
 def request(
     method: str, path: str, body: dict | None = None, url: str | None = None
 ) -> tuple[int, dict, dict]:
@@ -67,11 +82,8 @@ def request(
     full = base + path
     data = json.dumps(body).encode() if body is not None else None
     headers = {"content-type": "application/json"} if data is not None else {}
-    creds = Session().get_credentials()
-    if creds is None:
-        raise SystemExit("No AWS credentials found (profile, environment or instance role).")
     signed = AWSRequest(method=method, url=full, data=data, headers=headers)
-    SigV4Auth(creds.get_frozen_credentials(), "lambda", _region(base)).add_auth(signed)
+    SigV4Auth(_credentials(), "lambda", _region(base)).add_auth(signed)
     req = urllib.request.Request(full, data=data, headers=dict(signed.headers), method=method)
     try:
         with urllib.request.urlopen(req, timeout=30) as resp:
