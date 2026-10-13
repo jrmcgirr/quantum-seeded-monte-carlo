@@ -1,21 +1,170 @@
 # Quantum-Seeded Monte Carlo
 
-Serverless Monte Carlo option pricing on AWS, seeded from quantum entropy, with bit-for-bit replay at $0/month.
+<!-- One-line description (≤ 120 characters; final wording at G4): -->
+**Serverless Monte Carlo option pricing on AWS, seeded by Qrypt quantum entropy, replayable bit for bit, at $0/month.**
 
-> Status: planning complete, build starting Tuesday 2026-10-13. WS5 replaces this README with the grader quick-start and full instructions at gate G4.
+> **Status: skeleton (QMC-150).** Headings are final; text marked *TBD* is filled in from G1–G3 evidence (TEST_RESULTS, BENCHMARKS, `terraform state list`). Nothing below the quick-start has been run yet.
 
-## Planned stack
+## What it does and for whom
 
-`POST /jobs` (Lambda Function URL, `AWS_IAM`) → Qrypt entropy → HKDF master seed → DynamoDB job record → SQS (one message per shard) → worker Lambdas (NumPy, `SeedSequence` spawn keys, `PCG64DXSM`) → DynamoDB shard results → fan-in → estimate, standard error, 95% CI and the Black-Scholes comparison. `POST /jobs/{id}/replay` re-runs from the stored seed and proves the result is bit-identical. Guardrails: a $1 AWS Budget, eight custom metrics, seven alarms (including DLQ depth > 0), all in Terraform, all in the always-free tier.
+It prices a European call under Black-Scholes by Monte Carlo. Each job is seeded from one 1 KiB block of Qrypt quantum entropy, split into shards that run in parallel on Lambda, and aggregated into an estimate, standard error and 95% confidence interval, shown next to the closed-form Black-Scholes price. Any completed job can be replayed from its stored seed, and the replay reports whether the result is bit-identical.
+
+- **Analysts** get independent, non-reused seeds and a price with its error bars.
+- **Operators** get one `terraform apply`, a $1 Budget, alarms and a clean `terraform destroy`.
+- **Auditors and model-risk reviewers** get the seed's provenance and a byte-level replay of any reported number.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    C[Client: clients/qmc.py, SigV4] -->|AWS_IAM| U[Function URL]
+    U --> A[API Lambda]
+    A --> S[SSM SecureString: Qrypt token]
+    A --> Q[Qrypt api-eus]
+    A --> D[(DynamoDB qmc-env)]
+    A --> M[SQS shards]
+    M --> W[Worker Lambda x N]
+    W --> D
+    M -->|3 failed receives| DLQ[SQS DLQ]
+    DLQ --> AL[CloudWatch alarms] --> SNS[SNS email]
+```
+
+Every AWS resource, the submit and replay sequences, and the fail-closed branch: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+## Grader quick-start
+
+*TBD (QMC-151, after G1): every command below is run from a clean clone during the rehearsal (QMC-157) before it is final.*
+
+### Prerequisites
+
+- An AWS account and CLI v2 credentials with admin rights in **us-east-2** (*TBD: note for other Regions*).
+- Terraform ≥ 1.10, Python 3.13, [uv](https://docs.astral.sh/uv/), `make`. Docker is optional (only for `make test-golden`).
+- A Qrypt **Entropy** token from [portal.qrypt.com](https://portal.qrypt.com).
+
+### 1. Configure AWS credentials
+
+```sh
+aws configure            # or aws login / SSO; Region us-east-2
+aws sts get-caller-identity
+```
+
+### 2. Store the Qrypt token in SSM (out-of-band)
+
+The token is created by the CLI, never passed to Terraform, so it never lands in Terraform state or the repo; Terraform only knows the parameter's name. `read -s` keeps it out of shell history and `ps`.
+
+```sh
+read -rs QRYPT_API_KEY
+printf %s "$QRYPT_API_KEY" | aws ssm put-parameter --region us-east-2 \
+  --name /qmc/qrypt-api-key --type SecureString --value file:///dev/stdin
+unset QRYPT_API_KEY
+```
+
+### 3. Settings, build and deploy
+
+*TBD: settings file location and contents from `infra/terraform.tfvars.example` (WS1): `alert_email`, `worker_reserved_concurrency` and when to set it.*
+
+```sh
+make setup
+make build && make apply      # make apply runs make build
+```
+
+Confirm the SNS subscription email straight away: alarm emails are dropped until it is confirmed.
+
+### 4. Submit a job and wait
+
+```sh
+python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10
+python clients/qmc.py wait <job_id>
+```
+
+*TBD: exact flags from `clients/qmc.py --help` (WS2).*
+
+### 5. Read the result and the Black-Scholes comparison
+
+*TBD: an annotated `COMPLETE` response from `make e2e`: `result.estimate`, `std_error`, `ci95`, `reference.black_scholes`, `z_score`, `within_3se`.*
+
+### 6. Replay it
+
+```sh
+python clients/qmc.py replay <job_id>
+python clients/qmc.py wait <replay_job_id>    # replay_check.bit_identical: true
+```
+
+### 7. Tear down
+
+```sh
+make destroy
+```
+
+*TBD: what to check afterwards (no `/aws/lambda/qmc-*` log groups, no SNS subscriptions left) and how to delete the SSM parameter.*
+
+## Calling our deployed endpoint
+
+*TBD (QMC-158): endpoint URL, which is kept up through grading and then destroyed.*
+
+The URL uses `AWS_IAM` auth. Graders receive an invoke-only access key for the IAM user `qmc-dev-grader` privately; it is never committed and will be deleted after grading.
+
+```sh
+export AWS_ACCESS_KEY_ID=… AWS_SECRET_ACCESS_KEY=…     # the grader key
+export QMC_API_URL=<endpoint URL>
+python clients/qmc.py health
+```
+
+Or with `curl` alone:
+
+```sh
+curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECRET_ACCESS_KEY" \
+  -H 'content-type: application/json' "$QMC_API_URL/jobs" \
+  -d '{"S0":100,"K":100,"r":0.05,"sigma":0.2,"T":1,"paths":1000000,"shards":10}'
+```
+
+## API reference
+
+| Method and path | Purpose | Success |
+| --- | --- | --- |
+| `POST /jobs` | Validate, seed from Qrypt, record, enqueue | 202 |
+| `GET /jobs` | Newest 50 jobs | 200 |
+| `GET /jobs/{id}` | Progress, then the result and Black-Scholes reference | 200 |
+| `POST /jobs/{id}/replay` | Re-run from the stored seed; reports `replay_check` | 202 |
+| `GET /health` | DynamoDB and SSM reachability, deployed build sha | 200 / 503 |
+
+*TBD: request fields and limits, the job view, and the error table (HANDOFF §5), checked against the deployed API.*
+
+## How bit-identical replay works, and when it would not hold
+
+*TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
+
+## Guardrails: Budget, alarms, limits and custom metrics
+
+*TBD: $1 Budget, seven alarms, validation limits and concurrency caps, with the deployed values. Custom metrics: Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard; the metrics themselves come from EMF log lines, so no role needs the `cloudwatch:PutMetricData` wildcard.*
+
+## Why the worker fails closed at init
+
+*TBD: the SIMD self-check raises at import when NumPy would dispatch `exp` to AVX-512 (a different result by 1 ULP), because no result is better than a non-reproducible one; handler code otherwise never raises.*
+
+## Qrypt token expiry
+
+*TBD: date (must cover the grading window).*
+
+## Security
+
+*TBD: summary.* Details in [docs/SECURITY.md](docs/SECURITY.md).
+
+## Limitations and what we left out
+
+*TBD: Step Functions, PENDING_ENTROPY, ephemeral environments, portfolio VaR, CI deploys, and why (D21); anything cut at G3.*
 
 ## Documents
 
 | Document | What it is |
 | --- | --- |
-| [docs/PRIMER.md](docs/PRIMER.md) | Research report: reproducibility, Qrypt, fan-in patterns, the free-tier arithmetic, Terraform and IAM, risks, the 21 decisions |
-| [docs/PRD.md](docs/PRD.md) | Product requirements and success metrics |
-| [docs/HANDOFF.md](docs/HANDOFF.md) | Engineering contract: the single source of truth for every workstream |
-| [docs/ROADMAP.md](docs/ROADMAP.md) | Gates, workstreams and the ticket board (mirrors GitLab) |
-| [docs/DECISIONS.md](docs/DECISIONS.md) | Decisions D1–D35 with alternatives and reasons |
-| [docs/prompts/](docs/prompts/) | Session prompts for WS0–WS5 |
-| [docs/ASSIGNMENT.md](docs/ASSIGNMENT.md) | The assignment |
+| [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Architecture diagram: every AWS resource and data flow |
+| [docs/COST.md](docs/COST.md) | Cost note: free-tier arithmetic and the Budget screenshot |
+| [docs/SECURITY.md](docs/SECURITY.md) | Secrets, IAM, encryption, logging |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | Measured latency, wall clock and apply time |
+| [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md) | Test and drill evidence |
+| [docs/DECISIONS.md](docs/DECISIONS.md) | Decisions with alternatives and reasons |
+| [AI_USAGE.md](AI_USAGE.md) | AI usage disclosure |
+| [docs/PRIMER.md](docs/PRIMER.md) | Research report behind the decisions |
+| [docs/HANDOFF.md](docs/HANDOFF.md) | Engineering contract |
+| Demo video | *TBD (≤ 5 min)* |

@@ -140,9 +140,11 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** one sequential session.
 - **Why:** it worked last time; Terraform is the long pole and depends only on HANDOFF's names, not on `qmc_core`.
 
-## D24 Region us-east-1
+## D24 Region us-east-2 *(contract change 001)*
 
-- **Chose:** us-east-1. **Why:** Qrypt's only documented endpoint is `api-eus` (East US), so latency on the submit path is lowest there; Budgets are global anyway.
+- **Chose:** us-east-2 (Ohio).
+- **Alternatives:** us-east-1, the original choice for its closeness to Qrypt's only documented endpoint, `api-eus` (East US); a second, standard-sign-up account in us-east-1; turning on advanced features to lift the Region pin.
+- **Why:** the account is a new-AWS-experience project pinned to us-east-2 by managed SCPs and RCPs, so Regional resources cannot be created elsewhere. Ohio is still near `api-eus`. Nothing was deployed yet, so the move cost only text and defaults. Budgets are global anyway.
 
 ## D25 Paid-plan AWS account
 
