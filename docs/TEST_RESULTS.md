@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
-| Burst vs 30 req/10 s | `make burst` | cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
+| Burst vs 30 req/10 s | `make burst` | 1 s window cap 1 (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), **1 × 503: Qrypt 429 on a call ~1.2 s after the previous one** (finding below). Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -207,6 +207,40 @@ distinct worker execution environments (log streams): 17
 
 Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
 
+## Burst at 1 s window, cap 1 (contract change 005), build_sha 6dcb3c2, 2026-10-13 13:13:37Z
+
+`AWS_PROFILE=qmc make burst` (window 1 s, cap 1). Qrypt: 1 KiB.
+
+```
+40 submits in 3.19 s: {429: 38, 503: 1, 202: 1} {'ENTROPY_RATE_LIMITED': 38, 'QRYPT_RATE_LIMITED': 1}
+FAIL  only 202 or 429 ENTROPY_RATE_LIMITED  {'ENTROPY_RATE_LIMITED': 38, 'QRYPT_RATE_LIMITED': 1}
+PASS  every 429 has Retry-After  {'1': 38}
+PASS  limiter: ≤ 1 slots per 1 s window  {1791897219: 1, 1791897220: 1}
+PASS  qrypt_call lines ≥ accepted jobs  1 calls, 1 jobs
+PASS  limiter slots ≥ Qrypt calls  2 vs 1
+PASS  no Qrypt 429  {200: 1}
+PASS  ≤ 11 Qrypt calls in any rolling 10 s  max 1
+PASS  ≤ 30 Qrypt calls in any rolling 10 s (assignment)  max 1
+qrypt_call per fixed window (log timestamps): {1791897219: 1}
+PASS  QryptLatencyMs SampleCount = qrypt_call lines (same minutes)  1 vs 1 (after 0 s)
+```
+
+**The tool output above is wrong on one line.** `no Qrypt 429  {200: 1}` passed only because the tool stopped polling the logs once it had as many `qrypt_call` lines as accepted jobs (1), before the second call's line arrived. Fixed in `tools/burst.py` (543a5aa): it now waits for one line per submit that reached Qrypt, then 30 s more. The full log (`FilterLogEvents`, `/aws/lambda/qmc-dev-api`, from 13:13:30Z):
+
+```
+13:13:39.792Z qrypt_call job a40fe41e… http_status 200 latency_ms 284 attempt 1 outcome ok
+13:13:40.835Z qrypt_call job 5eb98575… http_status 429 latency_ms 136 attempt 1 outcome QRYPT_RATE_LIMITED
+13:13:40.971Z seeding_failed job 5eb98575… cause QRYPT_RATE_LIMITED   (+ SeedingFailures EMF)
+```
+
+So the correct verdict is **FAIL on "no Qrypt 429"** as well as on "only 202 or 429".
+
+**Finding (reported to WS0):**
+- The limiter did what contract change 005 specifies: 1 slot in window 1791897219 and 1 in 1791897220, then 38 clean 429s with `Retry-After: 1`.
+- Fixed 1 s windows still allow two calls about 1 s apart, and in the worst case milliseconds apart across a boundary. Qrypt rejected the second call with 429.
+- Request start times, derived as log time minus latency: 39.508 s and 40.699 s, a 1.19 s gap. From the first response (39.792 s) to the second request: 0.91 s. So Qrypt's limit is not "one per aligned second". It behaves like a sliding window or a minimum spacing of more than 1 s.
+- Fail-closed held: 503 naming the cause, nothing written. The assignment's limit (≤ 30 per 10 s) is met (max 1).
+
 ## Burst at cap 10 (contract change 004), build_sha f3873f8, 2026-10-13 12:55:43Z
 
 `AWS_PROFILE=qmc make burst` (cap 10 by default). Qrypt: 1 KiB, since only one block was delivered.
@@ -359,4 +393,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | fail-closed decoy drill (11:51 and 12:08 UTC, Qrypt 403) | 0 |
 | burst: aborted attempt (12:01:11) + run (12:01:50) | 5 + 15 |
 | burst at cap 10 (12:55 UTC; 1 × 200, 9 × Qrypt 429) | 1 |
-| **Total** | **24** |
+| burst at 1 s cap 1 (13:13 UTC; 1 × 200, 1 × Qrypt 429) | 1 |
+| **Total** | **25** |
