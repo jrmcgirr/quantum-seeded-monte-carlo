@@ -302,6 +302,21 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Applied:** WS1's MR !24 was applied from `main` `8a289d8` at 13:43:24Z (3 changed; the plan afterwards showed no changes).
 - **Verified:** read-only Budgets calls (`DescribeNotificationsForBudget`, `DescribeSubscribersForNotification`) show that each of the three notifications on `qmc-monthly` has exactly one subscriber, of type SNS, on `qmc-dev-alerts`.
 
+## D44 Grader user without `force_destroy`; its key is deleted by CLI before destroy *(drift check, 2026-10-13; HANDOFF 1.16, R25)*
+
+- **Chose:**
+  - `force_destroy = false` on `aws_iam_user` `qmc-<env>-grader` (MR !28).
+  - The grader's CLI-created access key is deleted by CLI before any `make destroy`, and the G4 sequence does so.
+  - `destroy` reads `force_destroy` from state, so changing it needs an apply first.
+- **Why:**
+  - With `force_destroy = true`, the AWS provider calls `iam:DeleteLoginProfile` while destroying the user. The new-AWS-experience SCP denies `iam:*LoginProfile*` ([SCPs and RCPs for projects](https://docs.aws.amazon.com/accounts/latest/reference/scps-and-rcps-for-projects.html), statement `DenyIAMRestrictedActions`).
+  - So the drift check's destroy (15:19Z) removed everything else and then stopped on the user.
+  - With `force_destroy = false` that call is not made. `DeleteUser` then succeeds as long as the user has no access key; otherwise it fails with `DeleteConflict`.
+- **Evidence:** after the fix the drift check passed: no orphans, apply from empty in 65 s (33 resources), `e2e --fresh` 12/12, then a plan with no changes (`docs/TEST_RESULTS.md`, 15:18–15:34Z). It was finished by hand after the first destroy failed, not as one uninterrupted run (TEST_RESULTS says so).
+- **Alternatives:**
+  - Keep `force_destroy = true` (destroy always fails here).
+  - Manage the access key in Terraform. Its secret would then enter state (D26).
+
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).

@@ -52,6 +52,7 @@ Both Lambda trust policies require `aws:SourceAccount` to be this account. The c
 - The API's Function URL uses `authorization_type = "AWS_IAM"`, so every request must be SigV4-signed by an identity holding both invoke permissions above. Since October 2025 a Function URL needs both (R9). Anonymous submission is impossible.
 - Graders use the IAM user `qmc-dev-grader`. Its only permission is the invoke policy above, attached inline on the user. The project's managed service control policy `DenyIAMRestrictedActions` denies IAM groups, so Checkov `CKV_AWS_40` is skipped with that reason (D37).
 - The grader's access key is created with the AWS CLI **after the last apply** and sent privately, so it never enters Terraform state or the repo (D26). It will be deleted after grading.
+- The grader user has `force_destroy = false`. The project SCP denies `iam:*LoginProfile*`, so a forced destroy fails. Its access key is therefore deleted by CLI before any destroy (D44, HANDOFF R25).
 
 ## Encryption
 
