@@ -33,7 +33,8 @@ resource "aws_iam_role" "api" {
 }
 
 # HANDOFF §8.3. The only "*" is the log-stream suffix on this function's own log group.
-# No kms:Decrypt: the aws/ssm key policy authorizes account principals through SSM (checked at G1).
+# No kms:Decrypt: the aws/ssm key policy authorizes account principals through SSM. Verified at G1: GetParameter
+# with WithDecryption succeeded with ssm:GetParameter alone (WS2, job 5358ec35af8a450d9eba939da9f610d9).
 data "aws_iam_policy_document" "api" {
   statement {
     sid = "Table"
