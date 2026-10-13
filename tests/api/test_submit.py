@@ -62,7 +62,8 @@ def test_qrypt_failure_writes_nothing_and_names_cause(api, capsys, code, http):
     api.fake.failures = [code, code]
     status, _, body = api.call("POST", "/jobs", REF)
     assert (status, body["error"]["code"]) == (http, code.name)
-    assert [i["pk"] for i in api.items()] == ["RL#qrypt"]  # only limiter slots
+    # Only limiter slots. A retry may take its slot in the next window (a second RL item).
+    assert {i["pk"] for i in api.items()} == {"RL#qrypt"}
     assert api.queued() == 0
     [failure] = emf_lines(capsys.readouterr().out, "SeedingFailures")
     assert failure["cause"] == code.name
@@ -78,7 +79,7 @@ def test_secret_failure_is_503_and_writes_nothing(api, monkeypatch):
     monkeypatch.setenv("QRYPT_API_KEY_PARAM", "/qmc/missing")
     status, _, body = api.call("POST", "/jobs", REF)
     assert (status, body["error"]["code"]) == (503, "SECRET_UNAVAILABLE")
-    assert [i["pk"] for i in api.items()] == ["RL#qrypt"] and api.queued() == 0
+    assert {i["pk"] for i in api.items()} == {"RL#qrypt"} and api.queued() == 0
     assert api.fake.calls == 0
 
 
@@ -88,7 +89,10 @@ def test_qrypt_rate_limited_sets_retry_after_10(api):
     assert headers["retry-after"] == "10"
 
 
-def test_retry_takes_a_second_limiter_slot(api):
+def test_retry_takes_a_second_limiter_slot(api, monkeypatch):
+    from qmc_api import submit
+
+    monkeypatch.setattr(submit.time, "time", lambda: 1_800_000_003.0)  # both slots in one window
     api.fake.failures = [ErrorCode.QRYPT_SERVER_ERROR]
     assert api.call("POST", "/jobs", REF)[0] == 202
     [window] = api.items("RL#")
@@ -163,3 +167,15 @@ def test_throttled_joblist_put_leaves_job_failed_not_queued(api, monkeypatch):
     assert (status, body["error"]["code"]) == (503, "ENQUEUE_FAILED")
     [job] = api.items("JOB#")
     assert job["status"] == "FAILED" and api.queued() == 0
+
+
+def test_failed_retry_across_a_window_boundary_writes_only_limiter_slots(api, monkeypatch):
+    from qmc_api import submit
+
+    times = iter([1_800_000_009.9])  # first slot just before the boundary, the retry's just after
+    monkeypatch.setattr(submit.time, "time", lambda: next(times, 1_800_000_010.1))
+    api.fake.failures = [ErrorCode.QRYPT_TIMEOUT, ErrorCode.QRYPT_TIMEOUT]
+    status, _, body = api.call("POST", "/jobs", REF)
+    assert (status, body["error"]["code"]) == (503, "QRYPT_TIMEOUT")
+    assert sorted(i["sk"] for i in api.items()) == ["1800000000", "1800000010"]
+    assert {i["pk"] for i in api.items()} == {"RL#qrypt"} and api.queued() == 0
