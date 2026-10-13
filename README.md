@@ -124,7 +124,14 @@ uv run python clients/qmc.py wait <replay_job_id>    # replay_check.bit_identica
 make destroy
 ```
 
-*TBD: what to check afterwards (no `/aws/lambda/qmc-*` log groups, no SNS subscriptions left) and how to delete the SSM parameter.*
+If you set `create_grader_user = true` and created an access key for it, delete that key first. The account's managed SCP blocks the clean-up Terraform would otherwise do, so `DeleteUser` fails while a key exists (D44):
+
+```sh
+aws iam list-access-keys --user-name qmc-dev-grader
+aws iam delete-access-key --user-name qmc-dev-grader --access-key-id <AccessKeyId>
+```
+
+*TBD: what to check afterwards (no `/aws/lambda/qmc-*` log groups, no SNS subscriptions left) and how to delete the SSM parameter.* WS4's drift check found no orphans after a full destroy (`docs/TEST_RESULTS.md`).
 
 ## Calling our deployed endpoint
 
@@ -213,7 +220,7 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 | Submit latency, warm (client round trip, n = 49) | p95 < 800 ms | p50 **251 ms**, p95 **301 ms** (Lambda `Duration` p50 105 ms, p95 151 ms) |
 | 1,000,000-path job wall clock, 5 runs (server-side `completed_at − created_at`) | < 60 s | **0.18–0.46 s** (client-observed ≤ 2.6 s) |
 | API cold start (natural, `Init Duration`) | reported separately | init p50 **375 ms**; a cold submit costs about 1.05 s on the server |
-| `terraform apply` from empty | < 10 min | *TBD (`make drift-check`)* |
+| `terraform apply` from empty | < 10 min | **65 s** for 33 resources (`make drift-check`, 2026-10-13 15:33Z, [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)) |
 
 ## Security
 
