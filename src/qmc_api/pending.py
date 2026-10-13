@@ -6,11 +6,17 @@ Each attempt backs off, then runs the same seeding as submit (§7.5 steps 2–5)
 job to QUEUED with a Qrypt-derived seed and enqueues it; failures retry up to
 PENDING_MAX_ATTEMPTS, then end FAILED naming the cause. Every transition is conditional on
 ``status = PENDING_ENTROPY``, so the seeder and GET's expiry backstop can race safely.
+
+A refused limiter slot (our own ENTROPY_RATE_LIMITED: another seeder or submit holds the 2 s gap)
+is not an attempt: the seeder waits for the gap plus 0–2 s of jitter, in process while that fits,
+else in a fresh invocation (same attempt, ``not_before_ms``, ``hop + 1``). Lambda stops a
+self-invoke chain at about 16 hops, so hop MAX_HOPS fails the job instead of re-invoking.
 """
 
 from __future__ import annotations
 
 import json
+import random
 import time
 
 from qmc_api import aws, jobs, submit
@@ -20,6 +26,8 @@ from qmc_core.params import is_job_id
 
 PENDING = "PENDING_ENTROPY"
 WORK_RESERVE_MS = 1000  # after the Qrypt budget: claim, two writes, enqueue
+JITTER_S = 2.0  # spreads seeders woken by the same gap end
+MAX_HOPS = 15  # Lambda's recursion detection drops the ~16th self-invoke of a chain
 
 
 def _sleep(seconds: float) -> None:
@@ -27,11 +35,12 @@ def _sleep(seconds: float) -> None:
     time.sleep(seconds)
 
 
-def invoke_seeder(job_id: str, attempt: int) -> None:
+def invoke_seeder(job_id: str, attempt: int, **wait) -> None:
+    """``wait`` is ``not_before_ms`` and ``hop`` for a slot-wait re-invoke."""
     aws.lambda_().invoke(
         FunctionName=aws.env("AWS_LAMBDA_FUNCTION_NAME"),
         InvocationType="Event",
-        Payload=json.dumps({"qmc_seed": job_id, "attempt": attempt}).encode(),
+        Payload=json.dumps({"qmc_seed": job_id, "attempt": attempt, **wait}).encode(),
     )
 
 
@@ -55,13 +64,17 @@ def backoff_s(attempt: int, context) -> float:
     fits in the remaining Lambda time."""
     steps = [int(x) for x in aws.env("PENDING_BACKOFF_MS").split(",")]
     wanted = steps[min(attempt, len(steps)) - 1]
-    room = (
+    return max(0, min(wanted / 1000, room_s(context)))
+
+
+def room_s(context) -> float:
+    """How long the seeder may still sleep and then make its Qrypt call and writes."""
+    return (
         context.get_remaining_time_in_millis()
         - aws.env_int("QRYPT_DEADLINE_MS")
         - submit.LAMBDA_MARGIN_MS
         - WORK_RESERVE_MS
-    )
-    return max(0, min(wanted, room)) / 1000
+    ) / 1000
 
 
 def run(event, context) -> None:
@@ -69,7 +82,13 @@ def run(event, context) -> None:
     the api-errors alarm, and async retries are off."""
     job_id = event.get("qmc_seed")
     try:
-        _attempt(job_id, int(event["attempt"]), context)
+        _attempt(
+            job_id,
+            int(event["attempt"]),
+            context,
+            event.get("not_before_ms"),
+            int(event.get("hop", 1)),
+        )
     except Exception as exc:
         logjson.log("seeder_error", level="ERROR", error=type(exc).__name__, detail=str(exc))
         if is_job_id(job_id):
@@ -79,26 +98,35 @@ def run(event, context) -> None:
                 logjson.log("pending_fail_failed", level="ERROR", error=type(fail_exc).__name__)
 
 
-def _attempt(job_id, attempt: int, context) -> None:
-    logjson.bind(job_id=job_id, attempt=attempt)
+def _attempt(job_id, attempt: int, context, not_before_ms=None, hop: int = 1) -> None:
+    logjson.bind(job_id=job_id, attempt=attempt, hop=hop)
     if not is_job_id(job_id):
         logjson.log("seed_skipped", level="WARNING", reason="bad job id")
         return
     table = aws.table()
-    job = jobs.read(table, job_id)
-    if job is None or job["status"] != PENDING:
-        logjson.log("seed_skipped", reason=job["status"] if job else "missing")
+    if not _still_pending(table, job_id):
         return
-    if time.time() > int(job["pending_until"]):
-        fail_pending(table, job_id, job.get("last_entropy_error") or "PENDING_EXPIRED")
-        return
-
-    _sleep(backoff_s(attempt, context))
-    try:
-        seed, entropy = submit.seed_job(table, job_id, context)
-    except QmcError as exc:
-        _failed(table, job_id, attempt, exc.code)
-        return
+    if not_before_ms is None:
+        _sleep(backoff_s(attempt, context))
+    else:
+        _sleep(max(0, min(int(not_before_ms) / 1000 - time.time(), room_s(context))))
+    while True:
+        try:
+            seed, entropy = submit.seed_job(table, job_id, context)
+            break
+        except QmcError as exc:
+            if exc.code is not ErrorCode.ENTROPY_RATE_LIMITED:
+                _failed(table, job_id, attempt, exc.code)
+                return
+            wait_s = (exc.retry_after or 1) + random.uniform(0, JITTER_S)
+        logjson.log("slot_wait", wait_s=round(wait_s, 3))
+        if wait_s > room_s(context):
+            _wait_elsewhere(table, job_id, attempt, hop, wait_s)
+            return
+        _sleep(wait_s)
+        # Re-read: a duplicate delivery of this attempt may have seeded it meanwhile.
+        if not _still_pending(table, job_id):
+            return
 
     try:
         queued = table.update_item(
@@ -123,6 +151,34 @@ def _attempt(job_id, attempt: int, context) -> None:
     except QmcError:
         return  # already marked FAILED and logged by publish
     emf.emit("JobsSubmitted", 1, job_id=job_id, pending_attempt=attempt)
+
+
+def _still_pending(table, job_id: str) -> bool:
+    """False (logged, or failed past ``pending_until``) once the job needs no seeding."""
+    job = jobs.read(table, job_id)
+    if job is None or job["status"] != PENDING:
+        logjson.log("seed_skipped", reason=job["status"] if job else "missing")
+        return False
+    if time.time() > int(job["pending_until"]):
+        fail_pending(table, job_id, job.get("last_entropy_error") or "PENDING_EXPIRED")
+        return False
+    return True
+
+
+def _wait_elsewhere(table, job_id: str, attempt: int, hop: int, wait_s: float) -> None:
+    """Carry a slot wait that does not fit this invocation to the next one."""
+    code = ErrorCode.ENTROPY_RATE_LIMITED
+    if hop >= MAX_HOPS:
+        logjson.log("seeder_hops_exhausted", level="ERROR")
+        fail_pending(table, job_id, code)
+        return
+    try:
+        invoke_seeder(
+            job_id, attempt, not_before_ms=int((time.time() + wait_s) * 1000), hop=hop + 1
+        )
+    except Exception as exc:
+        logjson.log("seeder_invoke_failed", level="ERROR", error=type(exc).__name__)
+        fail_pending(table, job_id, code)
 
 
 def _failed(table, job_id: str, attempt: int, code: ErrorCode) -> None:
