@@ -90,7 +90,7 @@ Every finished job now carries a `cost_estimate` (QMC-126).
 ## Optional features (contract changes 007 and 008)
 
 - **Step Functions watcher: off by default, so $0.** In `dev`, `ListStateMachines` returns none (after the apply of `main` `581563d`). Switched on, each job uses about 4–7 state transitions (contract change 007): a job finishes inside the first 10 s wait, so a typical run is Wait → GetJob → Check → Succeed, and Step Functions bills retries as extra transitions. Standard workflows get **4,000 transitions a month, always free**, then **$0.000025 each** in us-east-2 (Price List API `GetProducts`, `AmazonStates`, usage type `USE2-StateTransition`; [Step Functions pricing](https://aws.amazon.com/step-functions/pricing/)). That covers about 570–1,000 jobs a month (4,000 ÷ 7 to 4,000 ÷ 4). At 3,300 jobs a month it would be 13,200–23,100 transitions, **≈ $0.23–$0.48 a month**, which is why it stays off.
-- **PENDING_ENTROPY: no new resource.** A queued submit costs at most 4 extra API invocations (the seeder's attempts, each sleeping 2, 4 or 8 s first) and a few DynamoDB writes inside the provisioned 10/10. No queue, mapping, metric or alarm is added. The seeder calls Qrypt the same way a submit does, so it spends the same 1 KiB per success.
+- **PENDING_ENTROPY: no new resource.** A queued submit costs at most 4 extra API invocations (the seeder's attempts, each waiting 2, 4, 6 or 6 s first) and a few DynamoDB writes inside the provisioned 10/10. No queue, mapping, metric or alarm is added. The seeder calls Qrypt the same way a submit does, so it spends the same 1 KiB per success.
 
 ## At rest
 

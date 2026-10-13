@@ -131,7 +131,7 @@ sequenceDiagram
     A->>D: job put PENDING_ENTROPY (params only, no seed), joblist put
     A->>S: Invoke, InvocationType Event, attempt 1
     A-->>C: 202 job_id, status PENDING_ENTROPY
-    loop attempt 1..4 (PENDING_MAX_ATTEMPTS), backoff 2, 4, 8 s
+    loop attempt 1..4 (PENDING_MAX_ATTEMPTS), waits 2, 4, 6, 6 s
         S->>D: Qrypt gap slot
         S->>Q: GET 1 KiB
         alt block received

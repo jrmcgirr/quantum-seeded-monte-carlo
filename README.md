@@ -173,7 +173,7 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10 --queue
 ```
 
-The job holds no seed yet. The API retries in the background (4 attempts, backoff 2, 4, 8 s) and the job becomes `QUEUED` only with a Qrypt-derived seed, or ends `FAILED` naming the cause; a GET after 120 s fails a job whose retry was lost. An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409. Contract change 008; *TBD: WS4's drill.*
+The job holds no seed yet. The API retries in the background (4 attempts after waits of 2, 4, 6 and 6 s: `PENDING_BACKOFF_MS` is 2000,4000,8000 with the last value repeating, capped so each attempt fits the API's 10 s timeout) and the job becomes `QUEUED` only with a Qrypt-derived seed, or ends `FAILED` naming the cause; a GET after 120 s fails a job whose retry was lost. An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409. Contract change 008; *TBD: WS4's drill.*
 
 ## How bit-identical replay works, and when it would not hold
 
