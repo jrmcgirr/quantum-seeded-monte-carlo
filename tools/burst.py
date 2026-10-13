@@ -1,6 +1,7 @@
 """make burst (QMC-143): 40 concurrent submits must never put more than CAP Qrypt calls in one
-limiter window (HANDOFF D10), so never more than 30 in any rolling 10 s (the assignment's limit).
-Spends at most 40 KiB of Qrypt (one per 202, plus any retry).
+WINDOW_S limiter window (contract change 005: 1 call per 1 s window), Qrypt must never answer 429,
+the overflow must be clean 429 ENTROPY_RATE_LIMITED, and never more than 30 calls in any rolling
+10 s (the assignment's limit). Spends one KiB per 202 (about 1–4 at cap 1).
 
 Evidence, three ways: the RL#qrypt limiter items (slots per window, exact), the API's
 ``qrypt_call`` log lines (per-call timestamps), and the QryptLatencyMs SampleCount.
@@ -9,6 +10,8 @@ Evidence, three ways: the RL#qrypt limiter items (slots per window, exact), the 
 from __future__ import annotations
 
 import argparse
+import json
+import math
 import sys
 import time
 from collections import Counter
@@ -39,9 +42,8 @@ def sample_check(t0: float, t1: float):
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=40)
-    ap.add_argument(
-        "--cap", type=int, default=10, help="QRYPT_MAX_PER_WINDOW (contract change 004)"
-    )
+    ap.add_argument("--cap", type=int, default=1, help="QRYPT_MAX_PER_WINDOW (contract change 005)")
+    ap.add_argument("--window-s", type=int, default=1, help="QRYPT_WINDOW_S (contract change 005)")
     args = ap.parse_args()
     assert 1 <= args.n <= 40, "burst is capped at 40 submits (Qrypt quota)"
     check = Checks()
@@ -58,13 +60,17 @@ def main() -> int:
         set(codes) <= {202, 429} and set(errors) <= {"ENTROPY_RATE_LIMITED"},
         dict(errors),
     )
-    check(
-        "every 429 has Retry-After",
-        all(any(k.lower() == "retry-after" for k in h) for s, h, _ in results if s == 429),
+    retry_after = Counter(
+        next((v for k, v in h.items() if k.lower() == "retry-after"), None)
+        for s, h, _ in results
+        if s == 429
     )
+    check("every 429 has Retry-After", None not in retry_after, dict(retry_after))
 
     # Limiter windows (exact slot counts, written by the API).
-    table, windows = outputs()["table_name"], range(int(t0 // 10) * 10, int(t1 // 10) * 10 + 10, 10)
+    w_s = args.window_s
+    table = outputs()["table_name"]
+    windows = range(int(t0 // w_s) * w_s, int(t1 // w_s) * w_s + w_s, w_s)
     slots = {}
     for w in windows:
         item = (
@@ -77,7 +83,11 @@ def main() -> int:
             .get("Item")
         )
         slots[w] = int(item["n"]["N"]) if item else 0
-    check(f"limiter: ≤ {args.cap} slots per 10 s window", max(slots.values()) <= args.cap, slots)
+    check(
+        f"limiter: ≤ {args.cap} slots per {w_s} s window",
+        max(slots.values()) <= args.cap,
+        {w: n for w, n in slots.items() if n},
+    )
 
     # qrypt_call log lines: one per HTTP attempt (HANDOFF §9.3).
     pattern = '{ $.event = "qrypt_call" }'
@@ -92,18 +102,25 @@ def main() -> int:
         10,
     )
     ts = sorted(e["timestamp"] / 1000 for e in lines)
-    per_window = Counter(int(t // 10) * 10 for t in ts)
+    per_window = Counter(int(t // w_s) * w_s for t in ts)
+    statuses = Counter(json.loads(e["message"]).get("http_status") for e in lines)
     rolling = max(sum(1 for u in ts if t <= u < t + 10) for t in ts)
     check(
         "qrypt_call lines ≥ accepted jobs",
         len(ts) >= codes[202],
         f"{len(ts)} calls, {codes[202]} jobs",
     )
+    # Guards: the slots read must cover the calls seen (a changed RL key format would otherwise
+    # make the slot check pass on zeros), and Qrypt itself must never have said 429.
     check(
-        f"≤ {2 * args.cap} Qrypt calls in any rolling 10 s",
-        rolling <= 2 * args.cap,
-        f"max {rolling}",
+        "limiter slots ≥ Qrypt calls",
+        sum(slots.values()) >= len(ts),
+        f"{sum(slots.values())} vs {len(ts)}",
     )
+    check("no Qrypt 429", not statuses.get(429), dict(statuses))
+    # Fixed windows: a rolling 10 s interval can touch ceil(10 / w) + 1 windows at its edges.
+    bound = args.cap * (math.ceil(10 / w_s) + 1)
+    check(f"≤ {bound} Qrypt calls in any rolling 10 s", rolling <= bound, f"max {rolling}")
     check("≤ 30 Qrypt calls in any rolling 10 s (assignment)", rolling <= 30, f"max {rolling}")
     # Informational: a log line is stamped after its limiter slot, so a call near a boundary can
     # land in the next window here. The exact per-window count is the RL#qrypt check above.
