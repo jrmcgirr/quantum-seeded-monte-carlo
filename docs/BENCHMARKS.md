@@ -13,7 +13,7 @@ Measured with `make bench` (`tools/bench.py`) on the deployed `dev` stack in us-
 
 ## Environment
 
-- **Client:** James's MacBook (Apple silicon), Python 3.13 via `uv`, `clients/qmc.py` (`botocore` SigV4), the network path from the US Midwest to us-east-2.
+- **Client:** James's MacBook (Apple silicon), Python 3.13 via `uv`, `clients/qmc.py` (`botocore` SigV4) over the public internet to the us-east-2 Function URL. The client's network location was not measured, so client figures include an unmeasured WAN round trip.
 - **API:** `qmc-dev-api`, python3.13, x86_64, 512 MB, Function URL `AWS_IAM`. The worker is 1,024 MB with event source mapping `maximum_concurrency` 5.
 - **Qrypt limiter:** 1 call per 1 s window (contract change 005, HANDOFF 1.12).
 
@@ -43,7 +43,7 @@ Worker shard durations for 100,000 paths are 3–5 ms (shard items' `duration_ms
 
 ### Cold starts (natural only, no configuration change)
 - Every REPORT line with `Init Duration` since the stack was created (2-day look-back).
-- These cold starts are **not** idle-only: they also come from today's ~12 deployments (each new code version) and from three 40-way bursts that scaled the API out.
+- These cold starts are **not** idle-only: they also come from today's repeated deployments (every apply that changed a function's code or environment; not counted here) and from three 40-way bursts that scaled the API out.
 
 | function | cold starts | Init Duration p50 | Init Duration max | Duration p50 (cold invocation) |
 | --- | --- | --- | --- | --- |
