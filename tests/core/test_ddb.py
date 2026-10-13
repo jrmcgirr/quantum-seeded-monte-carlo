@@ -61,6 +61,7 @@ def all_builders():
     r = Result(2, 1.0, 0.5, (0.0, 2.0))
     return [
         ddb.limiter_take(1_792_000_000, 15, NOW),
+        ddb.limiter_gap_take(NOW, 2000),
         ddb.entropy_claim("cd" * 32, JOB, NOW),
         ddb.job_put(new_job()),
         ddb.joblist_put(new_job()),
@@ -345,3 +346,21 @@ def test_error_helpers():
     assert ddb.item_from_error(ValueError()) is None
     e = ClientError({"Error": {"Code": "ConditionalCheckFailedException"}}, "UpdateItem")
     assert ddb.is_conditional_failure(e) and ddb.item_from_error(e) is None
+
+
+def test_limiter_gap_spaces_calls(ddb_table):
+    """Contract change 006: two Qrypt calls are always >= gap_ms apart, race-free."""
+    ddb_table.update_item(**ddb.limiter_gap_take(NOW, 2000))
+    err = refused(lambda: ddb_table.update_item(**ddb.limiter_gap_take(NOW + 1.999, 2000)))
+    last = ddb.item_from_error(err)
+    assert last["at_ms"] == int(NOW * 1000)
+    assert ddb.limiter_gap_retry_after(last, NOW + 1.999, 2000) == 1
+    assert ddb.limiter_gap_retry_after(last, NOW + 0.2, 2000) == 2
+    ddb_table.update_item(**ddb.limiter_gap_take(NOW + 2.0, 2000))
+    item = ddb_table.get_item(Key=ddb.LIMITER_GAP_KEY)["Item"]
+    assert item["at_ms"] == int((NOW + 2.0) * 1000) and item["ttl"] == int(NOW + 2.0) + 3600
+
+
+def test_limiter_gap_retry_after_without_item():
+    assert ddb.limiter_gap_retry_after(None, NOW, 2000) == 1
+    assert ddb.limiter_gap_retry_after({}, NOW, 2000) == 1

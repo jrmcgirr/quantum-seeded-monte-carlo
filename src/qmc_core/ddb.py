@@ -99,6 +99,38 @@ def limiter_take(window: int, cap: int, now_epoch: float, size_s: int = LIMITER_
     }
 
 
+LIMITER_GAP_KEY = {"pk": "RL#qrypt", "sk": "LAST"}
+
+
+def limiter_gap_take(now_epoch: float, gap_ms: int) -> dict:
+    """``update_item`` on ``RL#qrypt/LAST``: ``SET #at = :now, #ttl = :ttl``, condition
+    ``attribute_not_exists(#at) OR #at <= :cutoff`` (``:cutoff = now_ms - gap_ms``), so two Qrypt
+    calls are always at least ``gap_ms`` apart (contract change 006). Times are integer epoch ms.
+    ``ReturnValuesOnConditionCheckFailure=ALL_OLD`` hands a refusal the last call time for
+    ``limiter_gap_retry_after``."""
+    now_ms = int(now_epoch * 1000)
+    return {
+        "Key": dict(LIMITER_GAP_KEY),
+        "UpdateExpression": "SET #at = :now, #ttl = :ttl",
+        "ConditionExpression": "attribute_not_exists(#at) OR #at <= :cutoff",
+        "ExpressionAttributeNames": {"#at": "at_ms", "#ttl": "ttl"},
+        "ExpressionAttributeValues": {
+            ":now": now_ms,
+            ":cutoff": now_ms - int(gap_ms),
+            ":ttl": int(now_epoch) + 3600,
+        },
+        "ReturnValuesOnConditionCheckFailure": "ALL_OLD",
+    }
+
+
+def limiter_gap_retry_after(last_item: Mapping | None, now_epoch: float, gap_ms: int) -> int:
+    """Whole seconds until the gap ends (at least 1), from the refused ``RL#qrypt/LAST`` item."""
+    if not last_item or "at_ms" not in last_item:
+        return 1
+    remaining_ms = int(last_item["at_ms"]) + int(gap_ms) - int(now_epoch * 1000)
+    return max(1, -(-remaining_ms // 1000))
+
+
 def entropy_claim(raw_sha256: str, job_id: str, now_epoch: float) -> dict:
     """``put_item`` of ``ENTROPY#<sha>/ENTROPY``, condition ``attribute_not_exists(pk)``."""
     return {
