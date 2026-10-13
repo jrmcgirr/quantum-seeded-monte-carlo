@@ -82,6 +82,5 @@ module "budget" {
 
   limit_usd = var.budget_limit_usd
   # This ARN comes from the topic policy resource, so the Budget waits for the publish permission it validates.
-  topic_arn   = module.observability.alerts_topic_arn
-  alert_email = var.alert_email
+  topic_arn = module.observability.alerts_topic_arn
 }

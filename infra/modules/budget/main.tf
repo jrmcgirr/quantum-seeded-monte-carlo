@@ -14,12 +14,12 @@ resource "aws_budgets_budget" "monthly" {
     ]
 
     content {
-      comparison_operator        = "GREATER_THAN"
-      notification_type          = notification.value.type
-      threshold                  = notification.value.threshold
-      threshold_type             = "PERCENTAGE"
-      subscriber_sns_topic_arns  = [var.topic_arn]
-      subscriber_email_addresses = [var.alert_email]
+      comparison_operator = "GREATER_THAN"
+      notification_type   = notification.value.type
+      threshold           = notification.value.threshold
+      threshold_type      = "PERCENTAGE"
+      # SNS only: direct email subscribers need AWS User Notifications verification, which the project SCP denies.
+      subscriber_sns_topic_arns = [var.topic_arn]
     }
   }
 }

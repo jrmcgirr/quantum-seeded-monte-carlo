@@ -78,3 +78,12 @@
   - Contract change 006 (HANDOFF 1.13): new root variable `qrypt_min_gap_ms` (default 2000, integer 1000–10000) → api env `QRYPT_MIN_GAP_MS`; `qrypt_window_s`, `qrypt_max_per_window` and their env vars removed. First based on `origin/staging` (D42); James then dropped `staging` (WS0 fast-forwarded main to it), so it was rebased onto main d1e29bf and targets `main`. `validate` and tflint clean. A `-lock=false` plan shows qmc-dev-api `-QRYPT_WINDOW_S`, `-QRYPT_MAX_PER_WINDOW`, `+QRYPT_MIN_GAP_MS = "2000"`, plus the sha bump on both Lambdas (2 changed).
   - Ordering risk is low: WS2's API on staging still reads the old variables, but `qmc_api/aws.py` defaults both to "1", so the API keeps working if this lands first.
 - **Human checks:** James chose to hold the description fix for the next change. The integrator promotes staging → main and applies.
+
+## 2026-10-13, WS1 Infrastructure (contract change 006 merged; Budget email)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - Contract change 006 merged as MR !21 into main (with WS2's !18).
+  - Budget notifications to SNS only (requested by WS0, approved by James): removed `subscriber_email_addresses` from all three notifications and the budget module's `alert_email` variable. Reason: Budgets' direct email subscribers need AWS User Notifications verification, and the project SCP denies `notifications-contacts:*` (`DenyNotificationContactsOperations`, in AWS's published project SCPs), so the address showed "unverified". Alerts reach James through `qmc-dev-alerts`, whose email subscription is confirmed.
+  - Checks: `validate` and tflint clean; checkov 137 passed, 0 failed, 20 skipped. A `-lock=false` plan at the deployed sha shows `aws_budgets_budget` 1 in-place (three `subscriber_email_addresses` → `[]`); after commit, the sha bump adds 2 Lambda updates. The plan after apply must confirm no drift on the empty list.
+- **Human checks:** James approved the change; WS0 merges and applies; James screenshots the Budget page.
