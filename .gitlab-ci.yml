@@ -14,13 +14,17 @@ variables:
   # Pinned for the NumPy in requirements/worker.txt (HANDOFF §12, QMC-099).
   NPY_DISABLE_CPU_FEATURES: "X86_V4 AVX512_ICL AVX512_SPR"
 
+# Every job has needs: [] so all start at once: stages only order the UI, and a failing test no
+# longer skips the infra jobs.
+default:
+  interruptible: true
+
 .uv:
-  image: python:3.13-slim
+  image: ghcr.io/astral-sh/uv:python3.13-bookworm-slim
   cache:
     key: { files: [uv.lock] }
     paths: [.uv-cache]
   before_script:
-    - pip install -q uv
     - uv sync --frozen
 
 .has_infra:
@@ -28,6 +32,7 @@ variables:
     - exists: ["infra/**/*.tf"]
 
 lint:
+  needs: []
   extends: .uv
   stage: lint
   script:
@@ -35,6 +40,7 @@ lint:
     - uv run ruff format --check .
 
 ssm-data-source-guard:
+  needs: []
   stage: lint
   image: alpine:3.22
   script:
@@ -42,11 +48,13 @@ ssm-data-source-guard:
     - if [ -d infra ] && grep -rnE 'data\s+"aws_ssm_parameter"' infra/; then echo 'data "aws_ssm_parameter" is banned (HANDOFF §8.1)'; exit 1; fi
 
 unit:
+  needs: []
   extends: .uv
   stage: test
   script:
     - uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=term --cov-report=xml:coverage.xml --cov-fail-under=80 --junitxml=junit.xml
-    - uv run pytest tests/core -q -m "not lambda_image" --cov=qmc_core --cov-fail-under=90 --no-header
+    # qmc_core gate (>= 90%) from the same run's coverage data, not a second pytest run.
+    - uv run coverage report --include='src/qmc_core/*' --fail-under=90
   coverage: '/TOTAL.*\s(\d+(?:\.\d+)?)%/'
   artifacts:
     when: always
@@ -55,6 +63,7 @@ unit:
       coverage_report: { coverage_format: cobertura, path: coverage.xml }
 
 golden:
+  needs: []
   stage: test
   image:
     name: public.ecr.aws/lambda/python:3.13
@@ -74,6 +83,7 @@ golden:
     reports: { junit: golden.xml }
 
 terraform:
+  needs: []
   extends: .has_infra
   stage: infra
   image: { name: "hashicorp/terraform:1.16.5", entrypoint: [""] }
@@ -83,6 +93,7 @@ terraform:
     - terraform -chdir=infra validate
 
 tflint:
+  needs: []
   extends: .has_infra
   stage: infra
   image: { name: "ghcr.io/terraform-linters/tflint:v0.64.0", entrypoint: [""] }
@@ -97,6 +108,7 @@ tflint:
     - tflint --chdir=infra --recursive
 
 checkov:
+  needs: []
   extends: .has_infra
   stage: security
   image: { name: "bridgecrew/checkov:3.3.28", entrypoint: [""] }

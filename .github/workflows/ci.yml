@@ -37,7 +37,7 @@ jobs:
       - uses: astral-sh/setup-uv@v6
       - run: uv sync --frozen
       - run: uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=term --cov-report=xml:coverage.xml --cov-fail-under=80 --junitxml=junit.xml
-      - run: uv run pytest tests/core -q -m "not lambda_image" --cov=qmc_core --cov-fail-under=90 --no-header
+      - run: uv run coverage report --include='src/qmc_core/*' --fail-under=90
       - uses: actions/upload-artifact@v4
         if: always()
         with:
