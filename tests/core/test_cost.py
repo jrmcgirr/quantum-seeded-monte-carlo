@@ -50,8 +50,15 @@ def test_estimate_uses_billed_time_when_recorded():
     cold = {"duration_ms": 60, "memory_mb": 1024, "invocation_ms": 400, "init_ms": 700}
     warm = {"duration_ms": 2, "memory_mb": 1024, "invocation_ms": 30, "init_ms": 0}
     got = cost.estimate(job, [cold, warm])
-    assert got["lambda_gb_seconds"] == pytest.approx(1.1 + 0.03 + cost.API_GB_S_PER_REQUEST)
+    overhead = 2 * cost.WORKER_OVERHEAD_MS / 1000
+    assert got["lambda_gb_seconds"] == pytest.approx(
+        1.1 + 0.03 + overhead + cost.API_GB_S_PER_REQUEST
+    )
     legacy = {"duration_ms": 60, "memory_mb": 1024, "invocation_ms": 400}
     assert cost.estimate(job, [legacy])["lambda_gb_seconds"] == pytest.approx(
-        0.4 + cost.API_GB_S_PER_REQUEST
+        0.4 + cost.WORKER_OVERHEAD_MS / 1000 + cost.API_GB_S_PER_REQUEST
+    )
+    old = {"duration_ms": 60, "memory_mb": 1024}  # pre-009 shard: no overhead added
+    assert cost.estimate(job, [old])["lambda_gb_seconds"] == pytest.approx(
+        0.06 + cost.API_GB_S_PER_REQUEST
     )
