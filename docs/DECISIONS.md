@@ -68,7 +68,7 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   1. **15 per aligned 10 s window** (the original choice). Any rolling 10 s window overlaps at most two aligned windows, so 15 per window guaranteed ≤ 30, the assignment's figure. Burst at 12:01:50Z (build `d0af0b1`): 40 concurrent submits gave 15 × 202 and 25 × 429. Qrypt answered all 15 with 200; it was not enforcing its 1 call/s rating then (that morning, up to 8 calls in one second all got 200).
   2. **10 per 10 s** (contract change 004), because the trial key is rated 1 call/s. Burst at 12:55:43Z (build `f3873f8`): the limiter let 10 calls through in about one second. Qrypt answered the first with 200 and the other 9 with 429. Result: 1 × 202, 30 × 429 and 9 × 503 `QRYPT_RATE_LIMITED`.
   3. **1 per aligned 1 s window** (contract change 005). Burst at 13:13:37Z (build `6dcb3c2`): 1 × 202, 38 × 429 (`Retry-After: 1`) and 1 × 503. Qrypt refused a call 1.19 s after the previous one, so its limit is sliding, not aligned to the second. James first chose to keep 1 s windows and document this, with a 2 s gap as the fallback "if it remains a problem" (HANDOFF 1.12).
-  4. **2 s minimum gap** (contract change 006, the current choice). That trigger fired: `make bench` at a steady 1.5 s pacing (13:20–13:22Z, build `6dcb3c2`) still got 3 Qrypt 429s. Two came 1.519 s and 1.486 s after the previous call, and the 285 ms retry after one of them also got 429.
+  4. **2 s minimum gap** (contract change 006, the current choice). Measured under 006 (build `e77a626`): a burst at 13:35:56Z gave 1 × 202 and 39 × 429 (`Retry-After` 1 or 2 s), with 0 Qrypt 429s and nothing written for the rejected submits. A steady check at 2.5 s pacing (13:36:48Z) made 5 Qrypt calls 2.49–3.03 s apart, all 200, max 4 in any rolling 10 s. That is no Qrypt 429 in the burst or the steady check; two runs, not a guarantee. 006 was adopted because the 1 s-window trigger fired: `make bench` at a steady 1.5 s pacing (13:20–13:22Z, build `6dcb3c2`) still got 3 Qrypt 429s. Two came 1.519 s and 1.486 s after the previous call, and the 285 ms retry after one of them also got 429.
 - Every rejected submit in these runs failed closed: a 503 naming the cause, no job written (I1). No run exceeded 30 calls in any 10 s; the measured maximum was 15.
 - **Alternatives:**
   - Keep 1 s windows and document them. Steady use at 1.5 s pacing still fails some submits.
@@ -291,6 +291,13 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - A `staging` integration branch, with workstream merge requests into `staging` and one promotion merge request into `main`. Tried and dropped the same day (HANDOFF 1.14 → 1.15): protecting `main` already gives the guarantee wanted, without an extra branch to keep in sync.
   - Unprotected `main` with direct integrator pushes, the original flow (D23).
 - **Why:** protection makes "every change passed CI" a rule that GitLab enforces, rather than a convention.
+
+## D43 Budget alerts through SNS only *(James, 2026-10-13)*
+
+- **Chose:** the `qmc-monthly` Budget's notifications (actual > 1%, actual > 100%, forecast > 100%) publish **only** to the SNS topic `qmc-dev-alerts`, which emails James through its confirmed subscription. The direct email subscriber on the Budget is removed (WS1).
+- **Why:** in the new AWS experience, a Budget's direct email recipient goes through AWS User Notifications and must be verified there. James's AWS-managed sign-in cannot do that: it lacks the `notifications-contacts:*` permissions. The SNS path already delivers the same alerts. This is also why the topic is unencrypted (D17): Budgets cannot publish to a topic that uses the AWS-managed SNS key.
+- **Alternatives:** keep the direct email subscriber (it cannot be verified with this sign-in); grant the `notifications-contacts` permissions (IAM permissions for human access are managed by AWS in this experience).
+- *TBD: cite WS1's merge request and the apply.*
 
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
