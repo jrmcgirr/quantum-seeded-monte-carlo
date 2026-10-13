@@ -5,7 +5,7 @@
 
 > **Status: skeleton (QMC-150).** Headings are final; text marked *TBD* is filled in from G1–G3 evidence (TEST_RESULTS, BENCHMARKS, `terraform state list`). Nothing below the quick-start has been run yet.
 >
-> **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov, and a guard against `data "aws_ssm_parameter"`.
+> **CI:** green on `main` `ea3820c` ([pipeline 52736](https://labs.gauntletai.com/jamesmcgirr/quantum-seeded-monte-carlo/-/pipelines/52736)): lint, unit (320 passed, 96% coverage), golden hash (7 passed, emulated amd64), Terraform validate, tflint, Checkov, and a guard against `data "aws_ssm_parameter"`. Also green on GitHub Actions, where the golden job runs natively on x86 ([run 38392842904](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38392842904), `d0af0b1`).
 
 ## What it does and for whom
 
