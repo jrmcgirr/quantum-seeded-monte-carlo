@@ -8,6 +8,8 @@ data "aws_caller_identity" "current" {}
 
 # Created before the function, with retention, so Lambda never creates a never-expiring group that survives destroy.
 resource "aws_cloudwatch_log_group" "worker" {
+  #checkov:skip=CKV_AWS_158:A customer-managed KMS key costs $1/month (I7); CloudWatch Logs encrypts at rest by default
+  #checkov:skip=CKV_AWS_338:14-day retention by design (I7, HANDOFF 9.3); results live in DynamoDB, not logs
   name              = "/aws/lambda/${local.function_name}"
   retention_in_days = var.log_retention_days
 }
@@ -67,6 +69,11 @@ resource "aws_iam_role_policy" "worker" {
 }
 
 resource "aws_lambda_function" "worker" {
+  #checkov:skip=CKV_AWS_50:X-Ray write actions need Resource "*" (D18)
+  #checkov:skip=CKV_AWS_117:No private resources to reach; a VPC needs NAT or endpoints, which are not free
+  #checkov:skip=CKV_AWS_173:No secrets in the environment (the Qrypt token stays in SSM); default AWS-managed encryption; a CMK costs $1/month
+  #checkov:skip=CKV_AWS_272:Code signing needs S3 and a signing profile; zips are deterministic and hashed in build/manifest.json
+  #checkov:skip=CKV_AWS_116:Invoked by the SQS event source mapping; failed messages go to the queue redrive DLQ, which is alarmed
   function_name                  = local.function_name
   role                           = aws_iam_role.worker.arn
   runtime                        = "python3.13"
@@ -77,11 +84,6 @@ resource "aws_lambda_function" "worker" {
   filename                       = var.zip_path
   source_code_hash               = filebase64sha256(var.zip_path)
   reserved_concurrent_executions = var.reserved_concurrency
-
-  # Keep glibc and the runtime fixed under a deployed function (I5, §7.9).
-  runtime_management_config {
-    update_runtime_on = "FunctionUpdate"
-  }
 
   environment {
     variables = {
@@ -100,6 +102,13 @@ resource "aws_lambda_function" "worker" {
   }
 
   depends_on = [aws_cloudwatch_log_group.worker, aws_iam_role_policy.worker]
+}
+
+# Keep glibc and the runtime fixed under a deployed function (I5, §7.9). Provider 6.x has no
+# runtime_management_config block on aws_lambda_function; this resource sets the same thing.
+resource "aws_lambda_runtime_management_config" "worker" {
+  function_name     = aws_lambda_function.worker.function_name
+  update_runtime_on = "FunctionUpdate"
 }
 
 # The only event source mapping in the stack (I7). Never map the DLQ: it must stay full for its alarm.

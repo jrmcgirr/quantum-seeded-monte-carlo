@@ -4,6 +4,8 @@ locals {
 
 # Created before the function, with retention, so Lambda never creates a never-expiring group that survives destroy.
 resource "aws_cloudwatch_log_group" "api" {
+  #checkov:skip=CKV_AWS_158:A customer-managed KMS key costs $1/month (I7); CloudWatch Logs encrypts at rest by default
+  #checkov:skip=CKV_AWS_338:14-day retention by design (I7, HANDOFF 9.3); results live in DynamoDB, not logs
   name              = "/aws/lambda/${local.function_name}"
   retention_in_days = var.log_retention_days
 }
@@ -72,6 +74,12 @@ resource "aws_iam_role_policy" "api" {
 
 # No reserved concurrency: 0 would disable the Function URL.
 resource "aws_lambda_function" "api" {
+  #checkov:skip=CKV_AWS_50:X-Ray write actions need Resource "*" (D18)
+  #checkov:skip=CKV_AWS_117:No private resources to reach; a VPC needs NAT or endpoints, which are not free
+  #checkov:skip=CKV_AWS_173:No secrets in the environment (the Qrypt token stays in SSM); default AWS-managed encryption; a CMK costs $1/month
+  #checkov:skip=CKV_AWS_272:Code signing needs S3 and a signing profile; zips are deterministic and hashed in build/manifest.json
+  #checkov:skip=CKV_AWS_115:Reserved concurrency 0 disables the Function URL; submits are capped by the Qrypt limiter instead
+  #checkov:skip=CKV_AWS_116:Invoked synchronously by the Function URL; an async DLQ never applies
   function_name    = local.function_name
   role             = aws_iam_role.api.arn
   runtime          = "python3.13"

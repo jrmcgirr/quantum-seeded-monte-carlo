@@ -1,6 +1,9 @@
 # One table (HANDOFF §6.1, D7). No server_side_encryption block: the default AWS-owned key is free and
 # still encrypts; enabling the block without a key switches to the KMS-billed aws/dynamodb key.
 resource "aws_dynamodb_table" "main" {
+  #checkov:skip=CKV_AWS_28:PITR is billed per GB-month with no free tier (I7); every result is reproducible by replay
+  #checkov:skip=CKV_AWS_119:A customer-managed KMS key costs $1/month (I7); the AWS-owned key encrypts at rest
+  #checkov:skip=CKV2_AWS_16:Fixed 10/10 provisioned capacity is the free tier (D7); autoscaling could leave it
   name                        = var.name
   billing_mode                = "PROVISIONED"
   read_capacity               = var.table_rcu

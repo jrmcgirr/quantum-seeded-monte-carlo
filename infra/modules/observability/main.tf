@@ -1,6 +1,7 @@
 # Unencrypted on purpose (D17): Budgets cannot publish to a topic encrypted with the AWS-managed SNS key,
 # and a customer-managed key costs $1/month.
 resource "aws_sns_topic" "alerts" {
+  #checkov:skip=CKV_AWS_26:Budgets cannot publish to a topic using the AWS-managed SNS key, and a CMK costs $1/month (D17)
   name = "${var.name}-alerts"
 }
 
