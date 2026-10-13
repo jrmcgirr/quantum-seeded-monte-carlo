@@ -21,8 +21,12 @@ TERMINAL = {"COMPLETE", "PARTIAL", "FAILED"}
 POLL_S = 2.0  # never faster: 10 RCU, consistent reads
 
 
+def api_url() -> str:
+    return os.environ.get("QMC_API_URL") or outputs()["api_url"]
+
+
 def call(method: str, path: str, body: dict | None = None) -> tuple[int, dict, dict]:
-    return request(method, path, body, url=os.environ.get("QMC_API_URL") or outputs()["api_url"])
+    return request(method, path, body, url=api_url())
 
 
 def wait(job_id: str, timeout_s: float = 180.0, on_view=None) -> tuple[dict, float]:
