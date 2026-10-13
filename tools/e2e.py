@@ -7,10 +7,29 @@ replay → bit-identical. ``--fresh``: right after an apply from empty, the list
 from __future__ import annotations
 
 import argparse
+import platform
 import sys
 import time
 
 from _common import REFERENCE, Checks, call, wait
+
+
+def local_estimate_hex(view: dict) -> str:
+    """The same job recomputed here from its master seed with qmc_core (informational only)."""
+    from qmc_core.aggregate import aggregate
+    from qmc_core.codec import to_hex
+    from qmc_core.params import split_paths
+    from qmc_core.seeds import master_int_from_hex
+    from qmc_core.sim import simulate_shard
+
+    m = master_int_from_hex(view["master_seed_hex"])
+    items = []
+    for i, n in enumerate(split_paths(view["paths"], view["shards"])):
+        r = simulate_shard(REFERENCE, n, m, i)
+        items.append(
+            {"shard_index": i, "n": r.n, "sum_hex": to_hex(r.sum), "sum_sq_hex": to_hex(r.sum_sq)}
+        )
+    return to_hex(aggregate(items).estimate)
 
 
 def main() -> int:
@@ -70,6 +89,12 @@ def main() -> int:
         f"z={ref.get('z_score')}",
     )
     check("1M paths counted once", res.get("n") == 1_000_000, res.get("n"))
+
+    local = local_estimate_hex(view)
+    print(
+        f"INFO  local recompute ({platform.machine()}) {'matches' if local == res.get('estimate_hex') else 'DIFFERS FROM'} "
+        f"Lambda: {local} vs {res.get('estimate_hex')} (cross-checks the provisional golden constants)"
+    )
 
     status, _, body = call("POST", f"/jobs/{job_id}/replay")
     if not check("replay → 202", status == 202, body.get("job_id") or body):
