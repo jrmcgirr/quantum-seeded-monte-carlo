@@ -115,3 +115,13 @@
   - API env: `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` "2000,4000,8000", `PENDING_MAX_AGE_S` 120, `MAX_PENDING_ENTROPY` 10.
   - Checkov 137 passed, 0 failed. Plan: 1 to add, 3 to change (incl. sha bump).
 - **Human checks:** James decided the stretch scope (HANDOFF 1.17 D21). The watcher stays off by default, so $0 holds (I7).
+
+## 2026-10-13, WS1 Infrastructure (stretch outcome; G3)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:** rebased both stretch branches on main 2b7bd48 (WS3's merge didn't touch `infra/`, so the predictions held; `validate` clean on both). Opened MR !50 (QMC-127, Closes #53) and MR !51 (QMC-128, Closes #54), each with its expected plan. Gave WS0 the two new Checkov suppressions (CKV_AWS_284, CKV_AWS_285) for WS5's SECURITY.md.
+- **Outcome (WS0, from main):**
+  - Both MRs merged and applied from main 581563d at 18:09:39Z: 1 to add (event invoke config), 3 to change, as predicted. The plan afterwards showed no changes.
+  - Env verified: the PENDING variables are set, and `SFN_ARN` is unset (watcher off). #53 and #54 closed.
+  - G3 (`g3-proven` on main 2fbd97e): every WS1 predicted plan matched, including the watcher on (3 add / 3 change) and off.
+- **Human checks:** James approved the push and both MRs; WS0 merged, applied and ran the watcher drill with WS4.
