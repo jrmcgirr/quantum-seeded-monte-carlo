@@ -8,7 +8,7 @@
 | 2 | A 1M-path job running to COMPLETE | `make e2e` or `clients/qmc.py submit` + `wait` | *TBD* |
 | 3 | The Black-Scholes comparison in the result | `clients/qmc.py get <id>` | *TBD* |
 | 4 | A bit-identical replay | `clients/qmc.py replay <id>` + `wait` | *TBD* |
-| 5 | Forced failure → PARTIAL → DLQ alarm → email | `make force-failure` | *TBD* |
+| 5 | Forced failure → PARTIAL → DLQ alarm → email | `make force-failure`; show the email (fallback still: [`images/dlq-alarm-email.png`](images/dlq-alarm-email.png), the 11:48:08 UTC alarm) | *TBD* |
 
 ## Narration
 
