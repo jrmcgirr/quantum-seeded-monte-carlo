@@ -44,6 +44,13 @@ Every AWS resource, the submit and replay sequences, and the fail-closed branch:
 - If you sign in with `aws login`, Python tools need `botocore[crt]` to read those credentials; `make setup` installs it.
 - A Qrypt **Entropy** token from [portal.qrypt.com](https://portal.qrypt.com).
 
+### 0. Clone
+
+```sh
+git clone https://github.com/jrmcgirr/quantum-seeded-monte-carlo.git
+cd quantum-seeded-monte-carlo
+```
+
 ### 1. Configure AWS credentials
 
 ```sh
