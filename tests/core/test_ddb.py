@@ -418,3 +418,31 @@ def test_pending_fail(ddb_table):
     got = ddb_table.get_item(**ddb.job_get(JOB))["Item"]
     assert got["status"] == "FAILED" and got["fail_reason"].startswith("QRYPT_RATE_LIMITED")
     refused(lambda: ddb_table.update_item(**ddb.pending_to_queued(JOB, "ab" * 32, {}, NOW, 900)))
+
+
+def test_shard_put_billing_fields(ddb_table):
+    kw = ddb.shard_put(
+        JOB,
+        0,
+        ShardResult(1, 1.0, 1.0),
+        duration_ms=2,
+        memory_mb=1024,
+        attempt=1,
+        fingerprint=FP,
+        now_epoch=NOW,
+        invocation_ms=31,
+        init_ms=0,
+    )
+    assert (kw["Item"]["invocation_ms"], kw["Item"]["init_ms"]) == (31, 0)
+    plain = ddb.shard_put(
+        JOB,
+        0,
+        ShardResult(1, 1.0, 1.0),
+        duration_ms=2,
+        memory_mb=1024,
+        attempt=1,
+        fingerprint=FP,
+        now_epoch=NOW,
+    )
+    assert "invocation_ms" not in plain["Item"] and "init_ms" not in plain["Item"]
+    ddb_table.put_item(**kw)
