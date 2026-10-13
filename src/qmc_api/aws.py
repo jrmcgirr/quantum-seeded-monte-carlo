@@ -21,6 +21,12 @@ DEFAULTS = {
     "JOB_DEADLINE_S": "900",
     "JOB_TTL_DAYS": "365",
     "FAULT_INJECTION_ENABLED": "false",
+    "AWS_LAMBDA_FUNCTION_NAME": "qmc-dev-api",
+    "SFN_ARN": "",
+    "MAX_PENDING_ENTROPY": "10",
+    "PENDING_MAX_AGE_S": "120",
+    "PENDING_MAX_ATTEMPTS": "4",
+    "PENDING_BACKOFF_MS": "2000,4000,8000",
 }
 
 
@@ -60,7 +66,17 @@ def ssm():
     return boto3.client("ssm")
 
 
+@functools.cache
+def lambda_():
+    return boto3.client("lambda")
+
+
+@functools.cache
+def sfn():
+    return boto3.client("stepfunctions")
+
+
 def reset() -> None:
     """Drop cached clients (tests start a fresh moto backend per test)."""
-    for f in (dynamodb, sqs, ssm):
+    for f in (dynamodb, sqs, ssm, lambda_, sfn):
         f.cache_clear()

@@ -110,8 +110,10 @@ def _submit_body(args) -> dict:
         for k in ("S0", "K", "r", "sigma", "T", "paths", "shards")
         if getattr(args, k) is not None
     }
-    if args.variance_reduction:
-        body["variance_reduction"] = args.variance_reduction
+    if args.variance_reduction or args.antithetic:
+        body["variance_reduction"] = "antithetic" if args.antithetic else args.variance_reduction
+    if args.queue:
+        body["on_entropy_failure"] = "queue"
     if args.fail_shards:
         body["fault_injection"] = {"fail_shards": args.fail_shards}
     return body
@@ -150,6 +152,12 @@ def main(argv: list[str] | None = None) -> int:
     s.add_argument("--paths", type=int)
     s.add_argument("--shards", type=int)
     s.add_argument("--variance-reduction", choices=("none", "antithetic"))
+    s.add_argument("--antithetic", action="store_true", help='variance_reduction "antithetic"')
+    s.add_argument(
+        "--queue",
+        action="store_true",
+        help='on_entropy_failure "queue": wait as PENDING_ENTROPY on a retryable Qrypt failure',
+    )
     s.add_argument("--fail-shards", type=int, nargs="+", help="fault_injection.fail_shards")
     s.add_argument("--file", help="JSON request body (overrides the flags)")
     for name, help_ in (("get", "GET /jobs/{id}"), ("replay", "POST /jobs/{id}/replay")):
