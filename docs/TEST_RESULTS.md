@@ -19,7 +19,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Burst vs 30 req/10 s | `make burst` | **006 (e77a626): PASS 11/11**: 1 × 202, 39 × 429 with Retry-After 1–2, no Qrypt 429, LAST item matches; steady spot check: 5 calls 2.49–3.03 s apart, all 200. Earlier, under 005: **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
-| Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
+| Clean teardown, no drift | `make drift-check` (integrator) | step 1 plan = 0 PASS (372583c); **FINDING: destroy blocked by the SCP** (`iam:DeleteLoginProfile` on the grader user), partially destroyed; WS1 fixing (`force_destroy = false`); remaining steps **pending** |
 | Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed 404 PASS; fresh list **pending** |
 | Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); apply time **pending** (#34); 2 Qrypt 429 → 503 at 1.5 s pacing (R24) |
 | Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
@@ -206,6 +206,29 @@ distinct worker execution environments (log streams): 17
 ```
 
 Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
+
+## Drift check (QMC-145, #34): finding, destroy blocked by the SCP, 2026-10-13 15:18Z
+
+The integrator ran `make drift-check` from `main` 372583c, with the deployed build_sha equal to the checkout:
+- **Step 1, plan:** no changes. PASS.
+- **Step 2, destroy:** removed everything except the grader IAM user, then **failed**. The managed SCP of the new-AWS-experience project denies `iam:DeleteLoginProfile`, which the AWS provider calls when it destroys an `aws_iam_user` with `force_destroy = true`.
+- Reported by WS0; WS1 is fixing it (`force_destroy = false`). The integrator will finish the destroy and run the remaining steps by hand.
+
+Partial state, checked by WS4 with read-only calls at about 15:25Z (us-east-2):
+
+| check | result |
+| --- | --- |
+| Lambda functions `qmc-*` | none |
+| DynamoDB tables `qmc-*` | none |
+| SQS queues `qmc-dev-*` | none |
+| log groups `/aws/lambda/qmc-dev-*` | none |
+| alarms `qmc-dev-*` | none |
+| IAM users `qmc-*` | **`qmc-dev-grader`** (0 access keys; `iam:GetLoginProfile` itself is denied by the same SCP, explicit deny in `p-057ovv87`) |
+| Tagging API, `Project=qmc, Env=dev` | 1 ARN: an event source mapping `a5a4dafe…`. `GetEventSourceMapping` → `ResourceNotFoundException`, and `ListEventSourceMappings` is empty, so this is a **stale tagging-API entry**, not an orphan |
+
+Consequences:
+- **Clean teardown is not yet demonstrated.** Re-run the destroy after WS1's fix, then the orphan scan.
+- The tagging API can list a deleted resource for longer than `drift_check.sh`'s single 90 s rescan. Its per-service checks (functions, tables, queues, log groups, alarms, IAM) are authoritative, and a tagging-API hit must be confirmed against its service before it counts as an orphan.
 
 ## Burst and steady check under contract change 006 (2 s minimum gap), build_sha e77a626, 2026-10-13
 
