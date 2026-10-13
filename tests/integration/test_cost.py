@@ -11,9 +11,10 @@ from .conftest import SMALL_JOB, shard_index
 
 
 def billed_ms(shard) -> int:
-    """Contract change 009: invocation_ms + init_ms when recorded, else duration_ms."""
+    """Contract change 009: invocation_ms + init_ms + the calibrated post-put overhead when
+    recorded, else duration_ms (no overhead: older shards stay a lower bound)."""
     if "invocation_ms" in shard:
-        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0))
+        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0)) + c.WORKER_OVERHEAD_MS
     return int(shard["duration_ms"])
 
 

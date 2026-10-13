@@ -55,7 +55,7 @@ All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `ter
 - Closed form (local, seed label committed in 12ac8a7 before the implementation existed): z = +0.868.
 - Golden antithetic shard: emulated x86 (`make test-golden`), native arm64, and native x86_64 (GitHub Actions run [38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576), main 61d8b42, `golden` success on ubuntu-24.04) all agree. **Confirmed.**
 
-**Cost attribution: FAIL on the deployed spot check (finding, reported to WS0). To be fixed by contract change 009 (MR !46): shards gain `invocation_ms` and `init_ms`, the estimate uses them, and the acceptance becomes worker GB-s within ±15% of REPORT Billed Duration × memory. Re-run pending.** `cost_estimate.lambda_gb_seconds` = 0.473, against **2.381 GB-s from the job's own REPORT lines** (10 worker invocations, found by `job_id` → `request_id`, plus the submit): 5× low. Per invocation:
+**Cost attribution: FAIL on the deployed spot check (finding, reported to WS0). To be fixed by contract change 009 (MR !46): shards gain `invocation_ms` and `init_ms`, the estimate uses them, and the acceptance becomes worker GB-s within ±15% of REPORT Billed Duration × memory. Re-run after 009: cold PASS (0.856×), warm FAIL (0.170×). See below.** `cost_estimate.lambda_gb_seconds` = 0.473, against **2.381 GB-s from the job's own REPORT lines** (10 worker invocations, found by `job_id` → `request_id`, plus the submit): 5× low. Per invocation:
 
 | | shard `duration_ms` (what the estimate uses) | worker REPORT `Duration` |
 | --- | --- | --- |
@@ -66,6 +66,33 @@ All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `ter
 - The submit also cost 0.265 GB-s, not the formula's fixed 0.125.
 - The moto test (`tests/integration/test_cost.py`) passes because it checks the formula against `duration_ms`, not against what Lambda bills.
 - Fix options for WS0/WS3: the worker records the invocation's elapsed time (handler entry → return) for cost, or the estimate is documented as "simulation compute only, a lower bound". The ±10% assertion has not been loosened.
+
+### Cost re-run after contract change 009, build 2b7bd48, 2026-10-13 16:36–16:38Z
+
+`AWS_PROFILE=qmc uv run python tools/antithetic_drill.py --cost-only`, run twice. Acceptance (WS0): worker GB-s in `cost_estimate` within ±15% of the matched worker REPORT **Billed** Duration × memory. Qrypt: 2 KiB.
+
+| run | job | environments | estimate (worker) | REPORT billed (worker) | ratio | result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 1, 16:36:54Z | `6b45b87e775444ce9fa0b56a64c48c67` | 5 fresh (right after the 16:36:32Z apply), 5 warm | 5.305 GB-s | 6.200 GB-s | **0.856×** | PASS, by 0.6 points |
+| 2, 16:37:28Z | `a8ac980912434d829ef4cddb0edd0399` | all 10 warm | 0.046 GB-s | 0.271 GB-s | **0.170×** | **FAIL** |
+
+Per invocation (shard item `duration_ms` / `invocation_ms` / `init_ms` vs that invocation's REPORT, matched by `request_id`):
+
+```
+run 1 cold:  invocation_ms 307–564 + init_ms 591–723  vs  billed 1,085–1,442 ms
+run 1 warm:  invocation_ms 4–5                        vs  billed 21–52 ms
+run 2 warm:  invocation_ms 3–6                        vs  billed 20–50 ms
+```
+
+**Finding (reported to WS0): 009 fixes cold starts, not steady state.**
+- `invocation_ms` is measured from handler entry to the `shard_put`. Everything after it is billed but unrecorded: the put itself, `mark_done`, EMF, the return, and finalize on the last shard. That is about **15–45 ms per warm invocation**, 4–10× the simulation.
+- The first run passed only because init (≈ 0.6–0.7 s) dominated five of its ten invocations.
+- A shard item cannot contain the duration of work done after it is written. Closing the gap needs a design choice (WS0/James):
+  - (a) add a measured per-invocation overhead constant to the estimate;
+  - (b) record the elapsed time again in `mark_done`, which still misses `mark_done` and finalize;
+  - (c) document `cost_estimate` as a lower bound.
+- The ±15% assertion has not been loosened.
+- Submit, reported only: billed 0.215 GB-s (cold) and 0.090 GB-s (warm), against the flat 0.125.
 
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
@@ -601,4 +628,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | 006 burst + steady spot check (13:35–13:37 UTC) | 1 + 5 |
 | idle cold submit (15:55 UTC) | 1 |
 | antithetic + cost drill (16:23 UTC) | 1 |
-| **Total** | **90** |
+| cost re-runs after 009 (16:36, 16:37 UTC) | 2 |
+| **Total** | **92** |

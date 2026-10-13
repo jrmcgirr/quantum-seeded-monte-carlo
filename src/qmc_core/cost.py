@@ -3,9 +3,11 @@
 Formula (what tests check):
 
 - ``lambda_gb_seconds`` = Σ over shards ``billed_ms / 1000 × memory_mb / 1024``, where
-  ``billed_ms`` = ``invocation_ms + init_ms`` when the worker recorded them (contract change 009:
-  the handler's elapsed time plus cold-start init, which Lambda bills), else ``duration_ms``
-  (simulation only; older shards, a lower bound)
+  ``billed_ms`` = ``invocation_ms + init_ms + WORKER_OVERHEAD_MS`` when the worker recorded them
+  (contract change 009: the handler's elapsed time up to the shard put, plus cold-start init,
+  plus a calibrated constant for the billed work after the put — put, mark_done, EMF, finalize —
+  which a shard item cannot record), else ``duration_ms`` (simulation only; older shards, a
+  lower bound)
   + ``API_GB_S_PER_REQUEST`` × (1 + ``polls``)  (API: 512 MB × 0.25 s per request = 0.125 GB-s, a flat warm-average estimate; a cold
   submit bills more)
 - ``lambda_requests`` = 1 (submit) + shards + ``polls``
@@ -33,11 +35,15 @@ SQS_USD_PER_REQUEST = 0.40 / 1_000_000
 # https://aws.amazon.com/dynamodb/pricing/on-demand/ (write request unit)
 DYNAMODB_USD_PER_WRITE = 0.625 / 1_000_000
 API_GB_S_PER_REQUEST = 0.5 * 0.25
+# Calibrated 2026-10-13 from WS4 drill-2 job a8ac9809 (all warm): billed 0.271 GB-s vs recorded
+# 0.046 GB-s over 10 shards at 1 GB, i.e. ~22 ms of post-put work per invocation. Validated on
+# fresh jobs (TEST_RESULTS, QMC-126); recalibrate if the worker's post-put path changes.
+WORKER_OVERHEAD_MS = 22
 
 
 def _billed_ms(shard: Mapping) -> int:
     if "invocation_ms" in shard:
-        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0))
+        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0)) + WORKER_OVERHEAD_MS
     return int(shard["duration_ms"])
 
 

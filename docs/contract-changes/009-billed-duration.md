@@ -14,3 +14,7 @@ Drill 2 (job 166f446d, build 61d8b42): `cost_estimate.lambda_gb_seconds` was 0.4
 - `cost.estimate` uses `invocation_ms + init_ms` per shard when present, else `duration_ms`.
 - The API share stays a flat 0.125 GB-s per request (a warm-average estimate, documented).
 - Drill 2 acceptance: worker GB-s within ±15% of the matched REPORT `Billed Duration` × memory (finalize work on the last shard after the put is not counted).
+
+## Follow-up (2026-10-13, James): calibrated post-put overhead
+
+WS4's re-run passed cold (0.856×) but failed all warm (0.170×): `invocation_ms` stops at the shard put, so the put, `mark_done`, EMF and finalize (≈ 15–45 ms warm) are billed but unrecorded. James chose a calibrated constant: `cost.WORKER_OVERHEAD_MS = 22` (from job a8ac9809), added per shard that has `invocation_ms`. No change to item attributes. Validation on fresh warm and mixed jobs keeps the ±15% criterion. WS3's choice to charge init at the first shard *put attempt* (not the first record) is also recorded here.
