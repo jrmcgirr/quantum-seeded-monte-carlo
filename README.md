@@ -340,7 +340,9 @@ This is the only deliberate raise. The handlers otherwise catch everything: the 
 
 ## Qrypt token expiry
 
-*TBD: date (must cover the grading window).*
+Our Qrypt token expires **2027-10-12 at about 9:36 PM US Central** (the portal shows local time without a zone; that is CDT, ≈ 2027-10-13 02:36 UTC), about a year after it was created and well past the grading window. The token itself is only in SSM (`/qmc/qrypt-api-key`) and appears nowhere in this repository.
+
+When a token expires, or its monthly entropy quota is used up, Qrypt answers 403 and every submit fails closed with 503 `QRYPT_FORBIDDEN`, writing nothing. To renew, store a new token with the same `put-parameter` command (step 2) plus `--overwrite`; the API picks it up within 300 s (its cache), with no apply needed.
 
 ## Measured performance
 
