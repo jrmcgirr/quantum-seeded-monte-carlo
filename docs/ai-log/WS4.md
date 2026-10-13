@@ -52,3 +52,28 @@
   - I told WS0 "pushed" once before pushing.
 - **Human checks:** James accepted contract changes 003–006 and HANDOFF 1.12, supplied the DLQ alarm email screenshot, confirmed SNS subscriptions, and merged at the gates. The integrator (WS0) ran every apply and destroy, including the drift check.
 - **Qrypt spent by WS4:** 89 KiB.
+
+## 2026-10-13, stretch drills and the G3 record (about 16:20–20:30 UTC)
+
+- **Workstream, tool, model:** WS4, Claude Code, Claude Opus 5.5. Tasked by WS0 (integrator) through cross-session messages; WS2 sent its seeder branch for verification.
+- **Asked:**
+  - verify the stretch tickets on the deployed stack: QMC-108 antithetic, QMC-126 cost, QMC-127 Step Functions watcher, QMC-128 PENDING_ENTROPY;
+  - then the G3 record at the commit WS0 named (8e0eac5) and closing #41.
+- **Produced:**
+  - Tools: `tools/antithetic_drill.py` (incl. `--cost-only`), `tools/sfn_drill.py`, `tools/pending_drill.py`.
+  - Tests: `tests/integration/test_sfn_definition.py`, `tests/deployed/test_sfn_definition.py`; 23 PENDING_ENTROPY moto tests, the last 3 for slot waits (verified to fail on the old seeder).
+  - Updates: the 009-aware and then overhead-aware `test_cost.py`.
+  - Docs: TEST_RESULTS sections for every drill, the final per-package coverage, and every §11 row at 8e0eac5 (re-run or carried, with the reason stated).
+  - MRs !47, !52, !55, !58 and the G3 docs MR.
+- **Findings raised (each led to a decision by WS0/James):**
+  - The cost estimate missed billed work. It was 5× low before 009; after 009, cold starts passed and warm jobs came in at 0.170×. James chose a calibrated overhead (`WORKER_OVERHEAD_MS` 22), validated on fresh jobs at 0.887× and 1.015×.
+  - The PENDING_ENTROPY backoff was synchronized: a 10-job burst gave 5 of 10 FAILED, one seed per retry wave. James chose "wait for slot + jitter" (WS2 !57); the re-run gave 10/10.
+- **Mistakes made and corrected:**
+  - My first slot-wait test wrote to DynamoDB inside the IAM guard; the guard caught it, and I fixed it with a clock skew.
+  - The PENDING drill replayed the first queued job even when it had failed; it now picks a completed one.
+  - The drill reported Qrypt spend as submits rather than calls.
+- **Human checks:**
+  - James chose both fixes and approved the extra Qrypt for the PENDING re-run.
+  - WS0 ran every apply (watcher on and off, each followed by a plan showing no changes) and merged.
+  - I verified the watcher removal myself, read-only.
+- **Qrypt spent by WS4:** 113 KiB in total (24 KiB this session).

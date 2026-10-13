@@ -1,6 +1,6 @@
 # Test results (WS4)
 
-Evidence for every row of HANDOFF §11. Each entry names the command, the commit or deployment it ran against, and its output. **Pending** means it has not run yet. Final form at the G3 commit (QMC-148).
+Evidence for every row of HANDOFF §11. **The G3 record is at main 8e0eac5 (section below the summary).** Each entry names the command, the commit or deployment it ran against, and its output. **Pending** means it has not run yet. Final form at the G3 commit (QMC-148).
 
 ## Summary
 
@@ -23,7 +23,64 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed after apply from empty (c1ab7ed): `GET /jobs` → `[]` PASS, unknown id → 404 PASS |
 | Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); 2 Qrypt 429 → 503 at 1.5 s pacing (R24); apply from empty 65 s; idle cold submit 2.4 s client / 1.6 s server (reported separately) |
 | IAM completeness (QMC-105) | WS0's `iam_guard` allow-list fixture (`tests/conftest.py`, self-tested in `tests/core/test_iam_guard.py`), used by `tests/api/*`, `tests/worker/*` and every `tests/integration` handler call | PASS: CI `unit` job, 320 passed (pipeline 52736). Any AWS operation outside HANDOFF §8.3 fails the test, even one a handler swallowed |
-| Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
+| Coverage ≥ 80% | GitLab CI pipeline 53156 `unit` job + per-package run at G3 main 8e0eac5 | PASS: **98.05%** total (gate 80%), qmc_core 100.00% (gate 90%); earlier 96.20% (ea3820c) |
+
+## G3 record: main 8e0eac5 (QMC-148, #41), 2026-10-13 ~19:45–20:30Z
+
+WS0 named **main 8e0eac5** (the !58 merge) as the G3 commit.
+- **Deployment:** `/health` returns `build_sha` 8e0eac54f19684b727a26efbe1866c4bd1d7f045, and the worker's `QMC_BUILD_SHA` is the same.
+- **CI:** MR !58 pipeline **53156** ran on 9e90079, whose tree is identical to 8e0eac5 (`git diff --quiet 9e90079 8e0eac5`). All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov` (blocking), `tflint`, `terraform`, `golden`, `unit`.
+  - The `unit` log shows `426 passed, 27 deselected` and `Required test coverage of 80% reached. Total coverage: 98.05%`.
+
+### Coverage per package (final)
+
+Run in a clean detached worktree of 8e0eac5 with `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, giving `426 passed, 27 deselected`. Figures are summed per package from `coverage.json` (lines + branches). The total matches CI.
+
+| package | statements | covered | branches | covered | coverage |
+| --- | --- | --- | --- | --- | --- |
+| qmc_api | 615 | 596 | 136 | 120 | 95.34% |
+| qmc_core | 748 | 748 | 176 | 176 | 100.00% |
+| qmc_worker | 139 | 139 | 30 | 29 | 99.41% |
+| **total** | 1,502 | 1,483 | 342 | 325 | **98.05%** |
+
+Gates (HANDOFF §11): total ≥ 80% **PASS**; `qmc_core` ≥ 90% **PASS**. No file is below 90%. Since the provisional run, `qmc_worker` rose from 88.48% to 99.41% (#51, WS3) and `qmc_api` from 92.46% to 95.34% (#52, WS2).
+
+### Every §11 row at 8e0eac5
+
+"Re-run" means it ran against the deployed 8e0eac5 today. "Carried" means the last deployed run is cited, its moto equivalent passes at 8e0eac5 (in the 426), and it was not repeated: it needs a destroy, a decoy-token apply, a DLQ alarm email, or about 58 KiB of Qrypt.
+
+| §11 row | at 8e0eac5 | evidence |
+| --- | --- | --- |
+| Core 1: submit returns an id, seed hex, params, QUEUED | **Re-run PASS** | 426 local + CI; `tests/deployed` 18 passed, 1 skipped (the decoy-only case); `make e2e` submit → 202 |
+| Core 2: distinct, reproducible shard seeds | **Re-run PASS** | `tests/correctness/test_seed_independence.py`, `tests/core/test_seeds.py` in the 426 |
+| Core 3: progress then COMPLETE | **Re-run PASS** | `make e2e`: `QUEUED:0/10 → COMPLETE:10/10`, 2.9 s, job `571e6fc2298e491b9ef7ca63c54fe7db` |
+| Core 4: within 3 SE at 1M | **Re-run PASS** | `make e2e` z = +0.854; `test_closed_form.py` (frozen seed) in the 426 |
+| Core 5: bit-identical replay | **Re-run PASS** | `make test-golden` (Lambda image, 8 passed); CI `golden`; `make e2e` replay `7b7108c1ddca405cb2373fa46ad8e835` bit-identical (10 shards, fingerprints match); `make replay-check N=20` on `571e6fc2…`: **20/20 bit-identical** (4 batches 10 min apart, all fingerprints match, 2 CPU model strings, 14 worker execution environments) |
+| Core 6: forced failure → DLQ alarm + email | Carried PASS (f40a083) | Screenshot `images/dlq-alarm-email.png`. Re-exercised at b0ee345 + watcher by `tools/sfn_drill.py`: `fail_shards [3]` → PARTIAL, DLQ |
+| Fail-closed seeding | Carried PASS (855e8d6, 503 QRYPT_FORBIDDEN) | moto `test_qrypt_failure_rejects_and_writes_nothing` and all §5.3 codes in the 426; live PENDING runs today confirmed no seed is written on any failure |
+| Duplicate SQS delivery | Carried PASS (f40a083) | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done` in the 426 |
+| Worker failure → PARTIAL | Carried PASS (f40a083); re-seen at b0ee345 (SFN drill, job `c8f8a1f5…` PARTIAL) | `test_forced_failure_ends_partial`, reaper test in the 426 |
+| Lambda timeout bound | **Re-run PASS** | `tests/deployed` paths-per-shard 400; `e2e` shards 100k paths each, worker `invocation_ms` 4–5 warm vs the 10 s timeout (cost drill, 581563d) |
+| Burst vs 30 req/10 s | **Re-run PASS 11/11** | `make burst`: 40 concurrent submits → 1 × 202, 39 × 429 `ENTROPY_RATE_LIMITED` with Retry-After 1–3; 1 Qrypt call (200); LAST item matches; nothing written for refused submits; SampleCount = log lines |
+| Cost runaway | **Re-run PASS** | `tests/deployed` MAX_PATHS 400. Live (read-only Lambda API): exactly 1 event source mapping (batch 1, `MaximumConcurrency` 5, `ReportBatchItemFailures`, Enabled); worker reserved concurrency 10; API `MAX_PATHS` 10000000, `MAX_SHARDS` 50, `MAX_PATHS_PER_SHARD` 1000000, `QRYPT_MIN_GAP_MS` 2000, `MAX_PENDING_ENTROPY` 10; no `SFN_ARN` (watcher off) |
+| Invalid inputs | **Re-run PASS** | `tests/api/test_validation.py` in the 426; `tests/deployed/test_edge_cases.py` |
+| Clean teardown, no drift | Carried PASS (c1ab7ed: 0 orphans, apply from empty 65 s, plan 0) | Today the integrator ran apply → plan with no changes for every change (581563d, watcher on/off at b0ee345, effb192, 8e0eac5) |
+| Empty / first run | Carried PASS (c1ab7ed, `e2e --fresh`) | `test_fresh_deployment_lists_no_jobs` in the 426; `e2e` unknown id → 404 naming the id (re-run) |
+| Benchmarks | Carried PASS (6dcb3c2), `docs/BENCHMARKS.md` | Today's warm 1M jobs: `e2e` 2.9 s submit → COMPLETE |
+| IAM completeness (QMC-105) | **Re-run PASS** | `iam_guard` over every moto test in the 426 (it caught a test-side `DeleteItem` today, see QMC-128) |
+| Coverage ≥ 80%, qmc_core ≥ 90% | **Re-run PASS** | 98.05% / 100.00% (above) |
+
+### Stretch (D21), all accepted
+
+| ticket | issue | evidence | result |
+| --- | --- | --- | --- |
+| QMC-108 antithetic | #48 | `tools/antithetic_drill.py`: z = −0.825; SE 0.707 × plain; replay bit-identical; Lambda shards 10/10 bit-identical; golden native x86 | PASS (61d8b42) |
+| QMC-126 cost attribution | #49 | `--cost-only` with `WORKER_OVERHEAD_MS` 22: mixed 0.887×, all-warm 1.015× (±15%) | PASS (581563d) |
+| QMC-127 Step Functions watcher | #53 | `ValidateStateMachineDefinition` OK; `tools/sfn_drill.py` 6/6; switched off afterwards (plan with no changes, no state machines) | PASS (b0ee345) |
+| QMC-128 PENDING_ENTROPY | #54 | `tools/pending_drill.py` 15/15 after the slot-wait fix (first run 5/10, finding) | PASS (effb192) |
+| QMC-119 Checkov blocking | #50 | canary MR !41 failed only on CKV_AWS_27; `checkov` job green at 8e0eac5 | PASS |
+
+Qrypt for the G3 re-runs: `e2e` 1 KiB + burst 1 KiB.
 
 ## CI (GitLab pipeline 52736, main ea3820c)
 
@@ -188,7 +245,7 @@ Switch-off: WS0 re-applied main b0ee345 without the variable at 19:30:23Z (3 des
 
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
-Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
+Superseded by the G3 record at 8e0eac5 (above); kept as history. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
 
 | package | statements | covered | branches | covered | coverage |
 | --- | --- | --- | --- | --- | --- |
@@ -725,4 +782,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | PENDING_ENTROPY burst drill (~18:13 UTC; 5 Qrypt calls) | 5 |
 | Step Functions watcher drill (~18:18 UTC) | 2 |
 | PENDING_ENTROPY burst re-run after slot-wait fix (~19:42 UTC) | 10 |
-| **Total** | **111** |
+| G3 re-runs at 8e0eac5: make e2e + make burst (~19:50 UTC) | 2 |
+| **Total** | **113** |
