@@ -29,6 +29,44 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 
 All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `terraform`, `golden`, `unit`. The `unit` job log shows `320 passed, 25 deselected`, `Required test coverage of 80% reached. Total coverage: 96.20%`, then a qmc_core-only run with `207 passed`, `Required test coverage of 90% reached. Total coverage: 100.00%`.
 
+## Stretch: antithetic variates (QMC-108, #48) and cost attribution (QMC-126, #49), build 61d8b42, 2026-10-13 16:23Z
+
+`AWS_PROFILE=qmc uv run python tools/antithetic_drill.py --plain 56b4a94b62c048ec9f46cbcd298ca454`. Antithetic job `166f446d9669459294ca69e125a1a097`, replay `e565b04f8a134168a37f226a6249cb55`. Qrypt: 1 KiB.
+
+| check | result | detail |
+| --- | --- | --- |
+| submit antithetic 1M/10 → 202                           | PASS | 166f446d9669459294ca69e125a1a097 |
+| COMPLETE                                                | PASS | COMPLETE |
+| variance_reduction antithetic, n = 500,000 pairs        | PASS | antithetic n=500000 |
+| within 3 SE of Black-Scholes                            | PASS | estimate=10.442006219489919 se=0.010397445315739301 z=-0.8249480939959117 |
+| SE below the plain job's at equal paths                 | PASS | antithetic 0.0103974 / plain 0.0147019 = 0.707 |
+| replay bit-identical                                    | PASS | e565b04f8a134168a37f226a6249cb55 shards=10 diffs=[] |
+| REPORT lines found (10 worker invocations + the submit) | PASS | worker 10 (request ids 10), api 1 |
+| cost_estimate GB-s within ±10% of REPORT GB-s           | FAIL | estimate 0.473 vs REPORT 2.381035 (worker 2.115620 + submit 0.265415) |
+
+7/8 passed
+
+**Antithetic: PASS.**
+- Deployed: 500,000 pairs, z = −0.825, SE 0.0103974 = **0.707 × the plain 1M job's SE** (0.0147019), i.e. about half the variance at equal paths. The local closed-form test gives the same ratio (0.010395 / 0.014693 = 0.707).
+- Replay bit-identical (10 shards, 0 diffs).
+- Real Lambda shards vs recompute (`tools/shard_crosscheck.py`, fixed to pass `variance_reduction` and to convert pairs to paths):
+  - native arm64: `166f446d…: 10/10 shards bit-identical`;
+  - Lambda image under emulated x86 (X86_V3): `10/10 shards bit-identical`.
+- Closed form (local, seed label committed in 12ac8a7 before the implementation existed): z = +0.868.
+- Golden antithetic shard: emulated x86 (`make test-golden`), native arm64, and native x86_64 (GitHub Actions run [38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576), main 61d8b42, `golden` success on ubuntu-24.04) all agree. **Confirmed.**
+
+**Cost attribution: FAIL on the deployed spot check (finding, reported to WS0).** `cost_estimate.lambda_gb_seconds` = 0.473, against **2.381 GB-s from the job's own REPORT lines** (10 worker invocations, found by `job_id` → `request_id`, plus the submit): 5× low. Per invocation:
+
+| | shard `duration_ms` (what the estimate uses) | worker REPORT `Duration` |
+| --- | --- | --- |
+| 5 warm invocations | 2 ms each | 18.6–59.7 ms |
+| 5 invocations in fresh environments (after the 16:21Z deploy) | 56–85 ms | 365–436 ms (`Billed Duration` 1,095–1,412 ms, which looks like init being billed; not parsed by this run) |
+
+- The worker's `duration_ms` times the **simulation only**. The per-invocation work dominates: SDK clients, `shard_put`, `mark_done`, finalize, EMF and the first SSM/DynamoDB connections in a new environment.
+- The submit also cost 0.265 GB-s, not the formula's fixed 0.125.
+- The moto test (`tests/integration/test_cost.py`) passes because it checks the formula against `duration_ms`, not against what Lambda bills.
+- Fix options for WS0/WS3: the worker records the invocation's elapsed time (handler entry → return) for cost, or the estimate is documented as "simulation compute only, a lower bound". The ±10% assertion has not been loosened.
+
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
 Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
@@ -562,4 +600,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | drift-check e2e --fresh (integrator, 15:34 UTC) | 1 |
 | 006 burst + steady spot check (13:35–13:37 UTC) | 1 + 5 |
 | idle cold submit (15:55 UTC) | 1 |
-| **Total** | **89** |
+| antithetic + cost drill (16:23 UTC) | 1 |
+| **Total** | **90** |

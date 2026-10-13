@@ -39,6 +39,7 @@ def fetch(job_id: str) -> None:
             "master_seed_hex": job["master_seed_hex"]["S"],
             "params": {k: v["S"] for k, v in job["params"]["M"].items()},
             "chunk_size": int(job["chunk_size"]["N"]),
+            "variance_reduction": job.get("variance_reduction", {}).get("S", "none"),
             "shards": [
                 {
                     "i": int(s["shard_index"]["N"]),
@@ -68,7 +69,11 @@ def check(path: str) -> int:
     here = f"{platform.machine()} exp={exp_target()} cpu={_cpu()}"
     bad = 0
     for s in sorted(job["shards"], key=lambda s: s["i"]):
-        r = simulate_shard(params, s["n"], m, s["i"], job["chunk_size"])
+        vr = job.get("variance_reduction", "none")
+        # A shard item's n counts pairs for antithetic; simulate_shard takes the shard's paths.
+        r = simulate_shard(
+            params, s["n"] * (2 if vr == "antithetic" else 1), m, s["i"], job["chunk_size"], vr
+        )
         ok = (to_hex(r.sum), to_hex(r.sum_sq)) == (s["sum_hex"], s["sum_sq_hex"])
         bad += not ok
         print(
