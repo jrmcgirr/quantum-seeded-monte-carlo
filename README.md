@@ -111,7 +111,7 @@ make destroy
 
 ## Calling our deployed endpoint
 
-*TBD (QMC-158): endpoint URL, which is kept up through grading and then destroyed.*
+*TBD (QMC-158): endpoint URL, which is kept up through grading and then destroyed, and the deployed `build_sha` as reported by `GET /health` at the rehearsal.*
 
 The URL uses `AWS_IAM` auth. Graders receive an invoke-only access key for the IAM user `qmc-dev-grader` privately; it is never committed and will be deleted after grading.
 
