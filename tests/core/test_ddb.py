@@ -131,7 +131,8 @@ def test_expressions_name_every_attribute_and_carry_no_floats():
 def test_keys():
     assert ddb.job_key(JOB) == {"pk": f"JOB#{JOB}", "sk": "META"}
     assert ddb.shard_key(JOB, 3) == {"pk": f"JOB#{JOB}", "sk": "SHARD#0003"}
-    assert ddb.limiter_window(1_792_000_007.9) == 1_792_000_000
+    assert ddb.limiter_window(1_792_000_007.9) == 1_792_000_007
+    assert ddb.limiter_window(1_792_000_007.9, 10) == 1_792_000_000
 
 
 def test_job_put_and_get(ddb_table):
@@ -190,9 +191,28 @@ def test_limiter_caps_window(ddb_table):
     for _ in range(3):
         ddb_table.update_item(**ddb.limiter_take(w, 3, NOW))
     refused(lambda: ddb_table.update_item(**ddb.limiter_take(w, 3, NOW)))
-    ddb_table.update_item(**ddb.limiter_take(w + 10, 3, NOW + 10))
+    ddb_table.update_item(**ddb.limiter_take(w + 1, 3, NOW + 1))
     item = ddb_table.get_item(Key={"pk": "RL#qrypt", "sk": str(w)})["Item"]
-    assert item["n"] == 3 and item["ttl"] == w + 10 + 3600
+    assert item["n"] == 3 and item["ttl"] == w + 1 + 3600
+
+
+def test_limiter_one_per_second(ddb_table):
+    """Contract change 005: 1 s windows, cap 1. A second call in the same second is refused."""
+    w = ddb.limiter_window(NOW + 0.2)
+    ddb_table.update_item(**ddb.limiter_take(w, 1, NOW + 0.2))
+    refused(
+        lambda: ddb_table.update_item(
+            **ddb.limiter_take(ddb.limiter_window(NOW + 0.9), 1, NOW + 0.9)
+        )
+    )
+    ddb_table.update_item(**ddb.limiter_take(ddb.limiter_window(NOW + 1.0), 1, NOW + 1.0))
+
+
+def test_limiter_ten_second_window_still_supported(ddb_table):
+    w = ddb.limiter_window(NOW, 10)
+    ddb_table.update_item(**ddb.limiter_take(w, 1, NOW, 10))
+    item = ddb_table.get_item(Key={"pk": "RL#qrypt", "sk": str(w)})["Item"]
+    assert item["ttl"] == w + 10 + 3600
 
 
 def test_entropy_claim_once(ddb_table):

@@ -99,18 +99,48 @@ def test_retry_takes_a_second_limiter_slot(api, monkeypatch):
     assert int(window["n"]) == 2 and api.fake.calls == 2
 
 
-def test_submit_past_the_window_cap_is_429(api, monkeypatch):
-    from qmc_api import aws, submit
+def test_defaults_are_one_call_per_second(api, monkeypatch):
+    from qmc_api import aws
 
-    cap = aws.env_int("QRYPT_MAX_PER_WINDOW")
-    assert cap == 10  # HANDOFF §8.4 default (contract change 004)
-    monkeypatch.setattr(submit.time, "time", lambda: 1_800_000_003.0)  # 7 s left in the window
-    statuses = [api.call("POST", "/jobs", {**REF, "shards": 1})[0] for _ in range(cap)]
-    assert statuses == [202] * cap
+    monkeypatch.delenv("QRYPT_MAX_PER_WINDOW")
+    assert (aws.env_int("QRYPT_WINDOW_S"), aws.env_int("QRYPT_MAX_PER_WINDOW")) == (1, 1)
+
+
+def test_second_submit_in_the_same_second_is_429_with_retry_after_1(api, monkeypatch):
+    from qmc_api import submit
+
+    monkeypatch.delenv("QRYPT_MAX_PER_WINDOW")
+    monkeypatch.setattr(submit.time, "time", lambda: 1_800_000_003.25)
+    assert api.call("POST", "/jobs", REF)[0] == 202
     status, headers, body = api.call("POST", "/jobs", REF)
     assert (status, body["error"]["code"]) == (429, "ENTROPY_RATE_LIMITED")
-    assert headers["retry-after"] == "7"
-    assert api.fake.calls == cap
+    assert headers["retry-after"] == "1"
+    assert api.fake.calls == 1
+
+
+def test_next_second_is_allowed(api, monkeypatch):
+    from qmc_api import submit
+
+    monkeypatch.delenv("QRYPT_MAX_PER_WINDOW")
+    now = [1_800_000_003.9]
+    monkeypatch.setattr(submit.time, "time", lambda: now[0])
+    assert api.call("POST", "/jobs", REF)[0] == 202
+    now[0] = 1_800_000_004.0
+    assert api.call("POST", "/jobs", REF)[0] == 202
+    assert sorted(i["sk"] for i in api.items("RL#")) == ["1800000003", "1800000004"]
+
+
+def test_qrypt_429_retry_refused_in_the_same_second_returns_qrypt_error(api, monkeypatch):
+    from qmc_api import submit
+
+    monkeypatch.delenv("QRYPT_MAX_PER_WINDOW")
+    monkeypatch.setattr(submit.time, "time", lambda: 1_800_000_003.25)
+    api.fake.failures = [ErrorCode.QRYPT_RATE_LIMITED]
+    status, headers, body = api.call("POST", "/jobs", REF)
+    assert (status, body["error"]["code"]) == (503, "QRYPT_RATE_LIMITED")
+    assert headers["retry-after"] == "10"
+    assert api.fake.calls == 1  # the second slot was refused, so no second Qrypt call
+    assert {i["pk"] for i in api.items()} == {"RL#qrypt"}
 
 
 def test_repeated_entropy_block_is_502_and_no_job(api):
@@ -174,8 +204,9 @@ def test_failed_retry_across_a_window_boundary_writes_only_limiter_slots(api, mo
 
     times = iter([1_800_000_009.9])  # first slot just before the boundary, the retry's just after
     monkeypatch.setattr(submit.time, "time", lambda: next(times, 1_800_000_010.1))
+    monkeypatch.delenv("QRYPT_MAX_PER_WINDOW")  # one slot per window: each window holds one
     api.fake.failures = [ErrorCode.QRYPT_TIMEOUT, ErrorCode.QRYPT_TIMEOUT]
     status, _, body = api.call("POST", "/jobs", REF)
     assert (status, body["error"]["code"]) == (503, "QRYPT_TIMEOUT")
-    assert sorted(i["sk"] for i in api.items()) == ["1800000000", "1800000010"]
+    assert sorted(i["sk"] for i in api.items()) == ["1800000009", "1800000010"]
     assert {i["pk"] for i in api.items()} == {"RL#qrypt"} and api.queued() == 0
