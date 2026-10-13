@@ -94,6 +94,71 @@ run 2 warm:  invocation_ms 3–6                        vs  billed 20–50 ms
 - The ±15% assertion has not been loosened.
 - Submit, reported only: billed 0.215 GB-s (cold) and 0.090 GB-s (warm), against the flat 0.125.
 
+### Cost validation with `WORKER_OVERHEAD_MS = 22` (James chose (a)), main 581563d, 2026-10-13 ~18:10Z
+
+Fix: `qmc_core.cost.WORKER_OVERHEAD_MS = 22`, added per shard that recorded `invocation_ms`. It was calibrated by WS0 from run 2 above (a8ac9809), so it is validated only on fresh jobs. Applied 18:09:39Z (MR !52). Same command and same ±15% acceptance, not loosened. Environments come from each shard item's `init_ms` (0 = warm). Qrypt: 2 KiB.
+
+| run | job | environments | estimate (worker) | REPORT billed (worker) | ratio | result |
+| --- | --- | --- | --- | --- | --- | --- |
+| 3, mixed | `42dccdcc800d4d2e800ccc0c36cf353a` | 5 fresh (right after the apply; `init_ms` 687–707), 5 warm | 5.34 GB-s | 6.021 GB-s | **0.887×** | PASS |
+| 4, all warm | `99d738cb3c864dbebc4680adcff33b24` | all 10 warm (`init_ms` 0, `invocation_ms` 4–5) | 0.263 GB-s | 0.259 GB-s | **1.015×** | PASS |
+
+- The warm case was 0.170× before the fix and is 1.015× after it.
+- The mixed case moved from 0.856× to 0.887×. Its remaining 11% gap comes from the cold invocations: their post-put work bills more than the 22 ms calibrated on warm ones. That is within tolerance.
+- Submit, reported only: billed 0.232 GB-s (run 3, cold API) and 0.096 GB-s (run 4), against the flat 0.125.
+- The tool's detail text "finalize after the last put is not counted" predates the overhead constant, which now covers that work on average.
+
+## PENDING_ENTROPY burst drill (QMC-128, contract change 008), main 581563d, 2026-10-13 ~18:13Z
+
+`AWS_PROFILE=qmc uv run python tools/pending_drill.py`. The drill sends 10 concurrent submits with `"on_entropy_failure": "queue"` (MAX_PENDING_ENTROPY 10). Live env: `QRYPT_MIN_GAP_MS` 2000, `PENDING_MAX_ATTEMPTS` 4, `PENDING_BACKOFF_MS` "2000,4000,8000" (the 8 s step is clipped to 6 s by the 10 s timeout). Expected: every job COMPLETE, Qrypt calls ≥ 2 s apart, no Qrypt 429, and a replay that is bit-identical. Moto suite (`tests/integration/test_pending_entropy.py`, 20 tests) passes on this commit.
+
+| check | result | detail |
+| --- | --- | --- |
+| every submit 202 | PASS | 1 QUEUED, 9 PENDING_ENTROPY |
+| all 10 jobs COMPLETE | **FAIL** | 5 COMPLETE, **5 FAILED `ENTROPY_RATE_LIMITED`** |
+| Qrypt calls ≥ 2 s apart | PASS | 5 calls; gaps 3.443, 4.121, 6.172, 6.14 s |
+| ≤ 5 in any rolling 10 s | PASS | max 3 |
+| no Qrypt 429 | PASS | 5 × 200 |
+| RL#qrypt/LAST = last call's slot | PASS | |
+| seeder log clean | **FAIL** | `entropy_seeded` 4, `seeding_failed` 5 (the 5 failed jobs, once each); no `duplicate_seeder`, `seeder_error` or `seeder_invoke_failed` |
+| replay of a queued job bit-identical | PASS | `bec89cf1…` → `4523c4cf2a144daca55d26bc8ff2e6de`, `bit_identical` true, fingerprints match. Run by hand: the drill's first pick had failed, and the tool now picks a completed queued job |
+
+Jobs: `744f0984` (QUEUED at submit), `bec89cf1`, `0ad99503`, `b55c66f3`, `08e56cfa` (COMPLETE, seeded on attempts 1, 2, 3, 4 in turn); `cb42c2bb`, `0df60377`, `ed93a581`, `753a4dfd`, `b135365b` (FAILED, `entropy_attempts` 5).
+
+**Finding (reported to WS0): the backoff is synchronized, so a queued burst seeds one job per wave.**
+- All 9 queued seeders start together and sleep the same 2 / 4 / 6 / 6 s. They then race for one 2 s gap slot, so each wave seeds exactly one job. The seeded jobs' attempt numbers (1, 2, 3, 4) and the call gaps (≈ backoff + Qrypt latency) both show this.
+- 4 attempts give 4 seeded jobs plus the 1 seeded at submit. The other 5 exhaust their attempts.
+- The fail-closed path held for every failed job (DynamoDB, I1):
+  - no `master_seed_hex`, no `seed_provenance`, no shard items;
+  - `fail_reason` = `last_entropy_error` = `ENTROPY_RATE_LIMITED`.
+- Qrypt spent: 5 KiB (5 calls), not 10. Refused slots never reach Qrypt.
+- The acceptance check is not loosened; WS0/James decide the fix.
+
+## Step Functions watcher drill (QMC-127, contract change 007), main b0ee345 + `enable_step_functions=true`, 2026-10-13 ~18:18Z
+
+WS0 applied at 18:16:02Z: 3 added and 3 changed, as WS1 predicted. The machine is `arn:aws:states:us-east-2:563632884084:stateMachine:qmc-dev-watcher`.
+
+Definition checks (both pass):
+- `tests/integration/test_sfn_definition.py`, offline:
+  - the definition renders like `templatefile`, with no placeholder left;
+  - every transition resolves;
+  - it polls `JOB#{job_id}/META` consistently;
+  - it waits only on QUEUED or PENDING_ENTROPY, with a poll interval of at least 2 s.
+- `tests/deployed/test_sfn_definition.py`: `ValidateStateMachineDefinition` on the rendered text returned `OK` with no diagnostics.
+
+Drill: `AWS_PROFILE=qmc uv run python tools/sfn_drill.py`. Qrypt: 2 KiB.
+
+| check | result | detail |
+| --- | --- | --- |
+| normal 100k/10: job COMPLETE | PASS | `266a3ade81db4d1b8a976d6ba3e14abf` |
+| normal: execution (named by job_id) SUCCEEDED | PASS | 10 s |
+| forced `fail_shards: [3]`: job PARTIAL | PASS | `c8f8a1f5952f4110b00fd17d0f88c13c` |
+| forced: execution FAILED, error `JobNotComplete` | PASS | 20 s |
+
+The DLQ was purged after the forced job.
+
+Switch-off: WS0 re-applied main b0ee345 without the variable at 19:30:23Z (3 destroyed, 2 changed); plan afterwards showed no changes. Verified read-only: `ListStateMachines` is empty and the API Lambda has no `SFN_ARN` (last modified 19:29:50Z). The watcher stays off by default.
+
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 
 Not the G3 record: #41 stays open until it is re-run at the G3 commit the integrator names. Command, in a clean worktree of `origin/main`: `uv run pytest -m "not deployed and not lambda_image" --cov --cov-report=json`, summed per package from `coverage.json` (line + branch). Result: `331 passed, 25 deselected`.
@@ -629,4 +694,7 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | idle cold submit (15:55 UTC) | 1 |
 | antithetic + cost drill (16:23 UTC) | 1 |
 | cost re-runs after 009 (16:36, 16:37 UTC) | 2 |
-| **Total** | **92** |
+| cost validation with WORKER_OVERHEAD_MS (~18:10 UTC) | 2 |
+| PENDING_ENTROPY burst drill (~18:13 UTC; 5 Qrypt calls) | 5 |
+| Step Functions watcher drill (~18:18 UTC) | 2 |
+| **Total** | **101** |
