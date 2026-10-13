@@ -1,8 +1,8 @@
 # CI (QMC-106). Mirrored job for job in .github/workflows/ci.yml (D19). No deploys from CI.
 stages: [lint, test, infra, security]
 
-# Pipelines run only for merge requests (workstream -> staging, and staging -> main), never for
-# plain pushes (James, 2026-10-13). Manual runs from the UI still work.
+# Pipelines run only for merge requests into the protected main, never for plain pushes
+# (James, 2026-10-13, D42). Manual runs from the UI still work.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
