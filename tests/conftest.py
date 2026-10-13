@@ -20,6 +20,8 @@ ALLOWED_OPERATIONS: dict[str, frozenset[tuple[str, str]]] = {
     "api": frozenset(
         {("dynamodb", op) for op in ("GetItem", "BatchGetItem", "PutItem", "UpdateItem", "Query")}
         | {("sqs", "SendMessage"), ("sqs", "SendMessageBatch"), ("ssm", "GetParameter")}
+        # Contract changes 007 (optional watcher) and 008 (PENDING_ENTROPY self-invoke).
+        | {("states", "StartExecution"), ("lambda", "Invoke")}
     ),
     "worker": frozenset(
         {("dynamodb", op) for op in ("PutItem", "UpdateItem", "Query")}

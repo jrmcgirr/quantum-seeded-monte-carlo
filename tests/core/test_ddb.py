@@ -62,6 +62,9 @@ def all_builders():
     return [
         ddb.limiter_take(1_792_000_000, 15, NOW),
         ddb.limiter_gap_take(NOW, 2000),
+        ddb.pending_attempt_failed(JOB, "x"),
+        ddb.pending_to_queued(JOB, "ab" * 32, {}, NOW, 900),
+        ddb.pending_fail(JOB, "x"),
         ddb.entropy_claim("cd" * 32, JOB, NOW),
         ddb.job_put(new_job()),
         ddb.joblist_put(new_job()),
@@ -364,3 +367,54 @@ def test_limiter_gap_spaces_calls(ddb_table):
 def test_limiter_gap_retry_after_without_item():
     assert ddb.limiter_gap_retry_after(None, NOW, 2000) == 1
     assert ddb.limiter_gap_retry_after({}, NOW, 2000) == 1
+
+
+def pending_item(**kw):
+    return ddb.new_pending_job_item(
+        job_id=JOB,
+        params=params_to_repr({"S0": 100, "K": 100, "r": 0.05, "sigma": 0.2, "T": 1}),
+        paths=30,
+        shards=3,
+        paths_per_shard=[10] * 3,
+        chunk_size=131072,
+        variance_reduction="none",
+        algo_version="qmc-sim/v1",
+        now_epoch=NOW,
+        max_age_s=120,
+        last_error="QRYPT_RATE_LIMITED",
+        **kw,
+    )
+
+
+def test_pending_job_lifecycle(ddb_table):
+    """Contract change 008: unseeded PENDING item → QUEUED only via pending_to_queued."""
+    item = pending_item(fault_injection={"fail_shards": [1]})
+    assert item["status"] == "PENDING_ENTROPY" and item["pending_until"] == int(NOW) + 120
+    assert not {"master_seed_hex", "seed_provenance", "deadline_at"} & item.keys()
+    assert "fault_injection" not in pending_item()
+    ddb_table.put_item(**ddb.job_put(item))
+    assert (
+        decide(ddb_table.get_item(**ddb.job_get(JOB))["Item"], now_epoch=NOW + 10**6).action
+        == "none"
+    )
+    out = ddb_table.update_item(**ddb.pending_attempt_failed(JOB, "QRYPT_TIMEOUT"))["Attributes"]
+    assert out["entropy_attempts"] == 2 and out["last_entropy_error"] == "QRYPT_TIMEOUT"
+    out = ddb_table.update_item(
+        **ddb.pending_to_queued(JOB, "ab" * 32, {"source": "qrypt"}, NOW + 5, 900)
+    )["Attributes"]
+    assert out["status"] == "QUEUED" and out["deadline_at"] == int(NOW + 5) + 900
+    assert out["master_seed_hex"] == "ab" * 32
+    err = refused(
+        lambda: ddb_table.update_item(**ddb.pending_to_queued(JOB, "cd" * 32, {}, NOW, 900))
+    )
+    assert ddb.item_from_error(err)["master_seed_hex"] == "ab" * 32  # seeded once only
+    refused(lambda: ddb_table.update_item(**ddb.pending_attempt_failed(JOB, "x")))
+    refused(lambda: ddb_table.update_item(**ddb.pending_fail(JOB, "x")))
+
+
+def test_pending_fail(ddb_table):
+    ddb_table.put_item(**ddb.job_put(pending_item()))
+    ddb_table.update_item(**ddb.pending_fail(JOB, "QRYPT_RATE_LIMITED after 4 attempts"))
+    got = ddb_table.get_item(**ddb.job_get(JOB))["Item"]
+    assert got["status"] == "FAILED" and got["fail_reason"].startswith("QRYPT_RATE_LIMITED")
+    refused(lambda: ddb_table.update_item(**ddb.pending_to_queued(JOB, "ab" * 32, {}, NOW, 900)))

@@ -58,6 +58,7 @@ class JobSpec:
     shards: int
     variance_reduction: str = "none"
     fail_shards: tuple[int, ...] = field(default=())
+    on_entropy_failure: str = "reject"  # contract change 008
 
     def params(self) -> dict[str, float]:
         """``{"S0", "K", "r", "sigma", "T"}`` as floats."""
@@ -72,7 +73,14 @@ _BOUNDS = {
     "sigma": (0, False, 5),
     "T": (0, False, 50),
 }
-_FIELDS = {*PARAM_NAMES, "paths", "shards", "variance_reduction", "fault_injection"}
+_FIELDS = {
+    *PARAM_NAMES,
+    "paths",
+    "shards",
+    "variance_reduction",
+    "fault_injection",
+    "on_entropy_failure",
+}
 _JOB_ID = re.compile(r"[0-9a-f]{32}")
 
 
@@ -139,8 +147,7 @@ def validate_job_request(body: Mapping, limits: Limits, fault_injection_enabled:
     """Validate a parsed body (§5.2), collecting every failure.
 
     Raises ``QmcError``: ``VALIDATION_ERROR`` with ``details`` (every failed field, unknown
-    fields as ``problem: "unknown field"``); otherwise ``UNSUPPORTED`` (antithetic, until
-    QMC-108) or ``FAULT_INJECTION_DISABLED``. Booleans are not numbers; ``1e6`` and
+    fields as ``problem: "unknown field"``); otherwise ``FAULT_INJECTION_DISABLED``. Booleans are not numbers; ``1e6`` and
     ``1000000.0`` are not integers.
     """
     errors: list[FieldError] = []
@@ -171,6 +178,15 @@ def validate_job_request(body: Mapping, limits: Limits, fault_injection_enabled:
     variance_reduction = body.get("variance_reduction", "none")
     if variance_reduction not in ("none", "antithetic"):
         errors.append(FieldError("variance_reduction", 'must be "none" or "antithetic"'))
+    elif variance_reduction == "antithetic" and paths is not None and shards is not None:
+        if paths % 2 or paths < 4:
+            errors.append(FieldError("paths", "must be even and >= 4 for antithetic"))
+        elif shards > paths // 2:
+            errors.append(FieldError("shards", "must be <= paths / 2 for antithetic"))
+
+    on_entropy_failure = body.get("on_entropy_failure", "reject")
+    if on_entropy_failure not in ("reject", "queue"):
+        errors.append(FieldError("on_entropy_failure", 'must be "reject" or "queue"'))
 
     fail_shards: tuple[int, ...] = ()
     fi = body.get("fault_injection")
@@ -193,10 +209,6 @@ def validate_job_request(body: Mapping, limits: Limits, fault_injection_enabled:
             f"{len(errors)} field(s) failed validation.",
             details=[e.to_dict() for e in errors],
         )
-    if variance_reduction == "antithetic":
-        raise QmcError(
-            ErrorCode.UNSUPPORTED, 'variance_reduction "antithetic" is not supported yet.'
-        )
     if "fault_injection" in body and not fault_injection_enabled:
         raise QmcError(ErrorCode.FAULT_INJECTION_DISABLED)
     assert paths is not None and shards is not None
@@ -205,6 +217,7 @@ def validate_job_request(body: Mapping, limits: Limits, fault_injection_enabled:
         paths=paths,
         shards=shards,
         variance_reduction=variance_reduction,
+        on_entropy_failure=on_entropy_failure,
         fail_shards=fail_shards,
     )
 
