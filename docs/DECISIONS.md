@@ -201,6 +201,17 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
 - **Alternatives:** everyone appends to `AI_USAGE.md` (a merge conflict at every gate); a union merge driver.
 - **Why:** no conflicts and a clean final document.
 
+## D36 NumPy 2.5.4 pin, and the self-check as the real SIMD guard *(G0, QMC-099)*
+
+- **Chose:** NumPy **2.5.4**, pinned by wheel sha256 in `requirements/worker.txt`, with `NPY_DISABLE_CPU_FEATURES="X86_V4 AVX512_ICL AVX512_SPR"`. Under that setting, in `public.ecr.aws/lambda/python:3.13`, float64 `exp` dispatches to **`X86_V3`** (AVX2 + FMA). The other ufuncs in the simulation (`add`, `multiply`, `subtract`) have no AVX-512 kernels, so every host with AVX2 runs the same code (HANDOFF §12).
+- **Finding:** NumPy 2.5.4 **silently ignores unknown names** in `NPY_DISABLE_CPU_FEATURES`: `FOO`, `AVX512F` and `AVX2` all leave the target unchanged. A typo would therefore disable nothing and give no warning.
+- **Consequences:**
+  - `tests/core/test_dispatch_lambda_image.py` asserts that every listed name is a real dispatch group.
+  - The fail-closed self-check at worker init (D2) is the guard that actually counts. If `exp` ever dispatches to an AVX-512 target, the worker refuses to run.
+  - Setting `NPY_DISABLE_CPU_FEATURES=X86_V3` drops `exp` to the `X86_V2` baseline, which shows the variable does take effect.
+- **Alternatives:** relying on the environment variable alone, which a typo would silently defeat; pinning the baseline with `X86_V3` disabled as well, which is slower and unnecessary while AVX2 is universal on Lambda x86.
+- **Evidence:** the target was measured locally under Docker amd64 emulation on Apple silicon (no AVX-512 visible). CI's `golden` job on an x86 runner is authoritative. *(WS5: cite its run at G3.)*
+
 ## Review refinements folded into earlier entries and HANDOFF *(review)*
 
 - PARTIAL writes are conditioned on the done-count snapshot they were computed from (`size(done_shards) = n`), and GET reads the job consistently: closes a race where a reaper could mark a just-completed shard failed (I4).

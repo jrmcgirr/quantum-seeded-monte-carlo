@@ -35,7 +35,7 @@ flowchart LR
 
     subgraph workers["module workers"]
         ESM["Event source mapping (batch 1, max concurrency 5)"]
-        WF["Lambda qmc-env-worker (python3.13, x86_64, 1,024 MB, NumPy)"]
+        WF["Lambda qmc-env-worker (python3.13, x86_64, 1,024 MB, NumPy 2.5.4, exp on X86_V3)"]
         WR["IAM role + policy: worker"]
         WL["Log group /aws/lambda/qmc-env-worker (14 d)"]
     end
