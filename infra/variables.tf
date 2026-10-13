@@ -136,13 +136,24 @@ variable "max_paths_per_shard" {
 }
 
 variable "qrypt_max_per_window" {
-  description = "Qrypt calls allowed per fixed 10 s window (QRYPT_MAX_PER_WINDOW). 10 = 1 call/s on average (the Qrypt trial key's rate); any rolling 10 s <= 20, under the assignment's 30 (contract change 004)."
+  description = "Qrypt calls allowed per fixed limiter window of qrypt_window_s (QRYPT_MAX_PER_WINDOW). 1 per 1 s matches the 1 call/s the Qrypt trial key enforces; any rolling 10 s <= 10 (contract changes 004, 005)."
   type        = number
-  default     = 10
+  default     = 1
 
   validation {
     condition     = var.qrypt_max_per_window >= 1 && var.qrypt_max_per_window <= 15
     error_message = "qrypt_max_per_window must be between 1 and 15."
+  }
+}
+
+variable "qrypt_window_s" {
+  description = "Length in seconds of the fixed Qrypt limiter window (QRYPT_WINDOW_S, contract change 005)."
+  type        = number
+  default     = 1
+
+  validation {
+    condition     = var.qrypt_window_s >= 1 && var.qrypt_window_s <= 10 && floor(var.qrypt_window_s) == var.qrypt_window_s
+    error_message = "qrypt_window_s must be an integer between 1 and 10."
   }
 }
 

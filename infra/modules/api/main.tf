@@ -107,6 +107,7 @@ resource "aws_lambda_function" "api" {
       QRYPT_URL               = "https://api-eus.qrypt.com/api/v1/quantum-entropy"
       QRYPT_DEADLINE_MS       = "2500"
       QRYPT_MAX_PER_WINDOW    = tostring(var.qrypt_max_per_window)
+      QRYPT_WINDOW_S          = tostring(var.qrypt_window_s)
       SECRET_CACHE_TTL_S      = "300"
       MAX_PATHS               = tostring(var.max_paths)
       MAX_SHARDS              = tostring(var.max_shards)

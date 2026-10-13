@@ -54,6 +54,7 @@ module "api" {
   qrypt_param_name       = var.qrypt_api_key_param_name
   qrypt_param_arn        = local.qrypt_param_arn
   qrypt_max_per_window   = var.qrypt_max_per_window
+  qrypt_window_s         = var.qrypt_window_s
   max_paths              = var.max_paths
   max_shards             = var.max_shards
   max_paths_per_shard    = var.max_paths_per_shard
