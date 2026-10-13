@@ -15,7 +15,8 @@ from qmc_core.codec import iso_ms, to_hex
 
 JOBLIST_PK = "JOBLIST"
 TTL_DAYS = 365
-LIMITER_WINDOW_S = 10
+# Qrypt enforces about 1 call/s, so the default window is 1 s (contract change 005; was 10).
+LIMITER_WINDOW_S = 1
 _DAY = 86_400
 
 
@@ -24,8 +25,8 @@ def _ttl(now_epoch: float, days: int = TTL_DAYS) -> int:
 
 
 def limiter_window(now_epoch: float, size_s: int = LIMITER_WINDOW_S) -> int:
-    """Start (epoch seconds) of the fixed window containing ``now``: ``floor(now / 10) * 10``.
-    ``Retry-After`` is ``window + size_s - now`` rounded up."""
+    """Start (epoch seconds) of the fixed window containing ``now``: ``floor(now / size_s) * size_s``.
+    ``Retry-After`` is ``window + size_s - now`` rounded up (at least 1)."""
     return int(now_epoch // size_s) * size_s
 
 
@@ -82,7 +83,7 @@ def new_job_item(
     return item
 
 
-def limiter_take(window: int, cap: int, now_epoch: float) -> dict:
+def limiter_take(window: int, cap: int, now_epoch: float, size_s: int = LIMITER_WINDOW_S) -> dict:
     """``update_item``: ``ADD #n :one SET #ttl = :ttl`` on ``RL#qrypt/<window>``, condition
     ``attribute_not_exists(#n) OR #n < :cap``."""
     return {
@@ -93,7 +94,7 @@ def limiter_take(window: int, cap: int, now_epoch: float) -> dict:
         "ExpressionAttributeValues": {
             ":one": 1,
             ":cap": cap,
-            ":ttl": int(window) + LIMITER_WINDOW_S + 3600,
+            ":ttl": int(window) + size_s + 3600,
         },
     }
 
