@@ -16,3 +16,7 @@ build/
 *.tfvars
 !*.tfvars.example
 crash.log
+dist/
+*.egg-info/
+junit.xml
+.qmc/
