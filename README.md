@@ -168,6 +168,17 @@ First live evidence (G1, 2026-10-13): WS4's `make e2e` replayed job `edaff921…
 
 *TBD: $1 Budget, seven alarms, validation limits and concurrency caps, with the deployed values. Custom metrics: Terraform sets the namespace (`METRICS_NAMESPACE`) and creates the alarms and the dashboard; the metrics themselves come from EMF log lines, so no role needs the `cloudwatch:PutMetricData` wildcard.*
 
+**Dashboard `qmc-dev`** (all 8 custom metrics plus Lambda and SQS metrics). Rendered read-only with `AWS_PROFILE=qmc uv run python docs/images/render_dashboard.py --hours 2` at 2026-10-13 12:56Z, after WS4's replay ×20:
+
+| | |
+| --- | --- |
+| ![Jobs](docs/images/dashboard-01-jobs-sum-per-5-min.png) | ![Paths simulated](docs/images/dashboard-02-paths-simulated-sum-per-5-min.png) |
+| ![Qrypt entropy and seeding failures](docs/images/dashboard-03-qrypt-entropy-and-seeding-failures.png) | ![Qrypt latency](docs/images/dashboard-04-qrypt-latency-ms.png) |
+| ![Worker duration](docs/images/dashboard-05-worker-duration-ms.png) | ![Worker errors, throttles, shard failures](docs/images/dashboard-06-worker-errors-throttles-shard-failures.png) |
+| ![Shard queue](docs/images/dashboard-07-shard-queue-depth-and-oldest-age-s.png) | ![DLQ depth](docs/images/dashboard-08-dlq-depth.png) |
+
+The DLQ depth of 1 (about 11:25–11:45Z) and the shard failure come from the forced-failure drill. Alarm states at render time are in [docs/images/dashboard-alarms.md](docs/images/dashboard-alarms.md): all 7 were OK.
+
 **Qrypt rate limit.** At most **10** Qrypt calls per aligned 10 s window: ≤ 1/s on average and ≤ 20 in any rolling 10 s, under Qrypt's limit of 30. The trial key is rated 1 call/s (D10, contract change 004). A burst of 40 concurrent submits is expected to give 10 × 202 and 30 × 429 `ENTROPY_RATE_LIMITED`, each with `Retry-After`. *TBD: WS4's re-run after the 004 apply.* The earlier run under the old cap of 15 (build `d0af0b1`, `docs/TEST_RESULTS.md`) gave 15 × 202 and 25 × 429, with at most 15 Qrypt calls in any rolling 10 s.
 
 ## Why the worker fails closed at init
