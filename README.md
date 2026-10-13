@@ -191,7 +191,7 @@ Three bursts of 40 concurrent submits (WS4, `make burst`, `docs/TEST_RESULTS.md`
 | 12:55:43Z, build `f3873f8` | 10 per 10 s (004) | 1 | 30 | 9 | 10 |
 | 13:13:37Z, build `6dcb3c2` | 1 per 1 s (005) | 1 | 38 | 1 | 2 (one 200, one 429; `qrypt_call` log lines) |
 
-The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z. Even with 1 s windows, a call 1.19 s after the previous one was refused, so Qrypt's limit behaves like a sliding window or a minimum spacing. *TBD: a minimum-spacing limiter is under discussion (WS0, WS4).*
+The Qrypt trial key is rated at 1 call/s. Qrypt did not enforce that at 12:01Z, but did from about 12:55Z. Even with 1 s windows, a call 1.19 s after the previous one was refused, so Qrypt's limit behaves like a sliding window or a minimum spacing. We keep 1 s windows and document this (D10, HANDOFF R24). Under a burst, the limiter turns overflow into our own 429 with `Retry-After: 1`. Occasionally a call just after a window boundary is still refused by Qrypt. That submit fails closed as 503 `QRYPT_RATE_LIMITED` and can simply be retried. If this happens in normal use, the fallback is a 2 s minimum gap between Qrypt calls (≤ 5 per rolling 10 s), as contract change 006.
 
 ## Why the worker fails closed at init
 
