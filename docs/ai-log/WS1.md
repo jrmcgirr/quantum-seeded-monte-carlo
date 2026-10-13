@@ -87,3 +87,17 @@
   - Budget notifications to SNS only (requested by WS0, approved by James): removed `subscriber_email_addresses` from all three notifications and the budget module's `alert_email` variable. Reason: Budgets' direct email subscribers need AWS User Notifications verification, and the project SCP denies `notifications-contacts:*` (`DenyNotificationContactsOperations`, in AWS's published project SCPs), so the address showed "unverified". Alerts reach James through `qmc-dev-alerts`, whose email subscription is confirmed.
   - Checks: `validate` and tflint clean; checkov 137 passed, 0 failed, 20 skipped. A `-lock=false` plan at the deployed sha shows `aws_budgets_budget` 1 in-place (three `subscriber_email_addresses` → `[]`); after commit, the sha bump adds 2 Lambda updates. The plan after apply must confirm no drift on the empty list.
 - **Human checks:** James approved the change; WS0 merges and applies; James screenshots the Budget page.
+
+## 2026-10-13, about 10:20–10:40 AM CT, WS1 Infrastructure (drift-check destroy failure, MR !28)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Incident:** drift-check's `make destroy` (main 372583c, 15:18Z) removed everything except `qmc-dev-grader`, then failed on `iam:DeleteLoginProfile`. That's an SCP explicit deny: the Paid-plan `DenyIAMRestrictedActions` denies `iam:*LoginProfile*`. The cause was my own `force_destroy = true` on the user (set in QMC-113), which makes the provider delete the login profile, keys and MFA before `DeleteUser`.
+- **Produced:** MR !28, `force_destroy = false` with a comment: delete the CLI-created grader access key (D26) by CLI before any destroy. Diagnosed that destroy reads `force_destroy` from state (still `true`), so merging alone wouldn't unblock it, and gave WS0 a targeted apply on the user (state-only update) followed by `make destroy`, with `state rm` plus `aws iam delete-user` as the alternative.
+- **Outcome (WS0, from main):**
+  - The targeted apply flipped `force_destroy` at 15:32:40Z (1 changed), and destroy finished with `DeleteUser` in 1 s.
+  - The orphan scan found nothing (11/11 checks clean).
+  - **Apply from empty: 33 resources in 65 s.**
+  - `make e2e --fresh` passed 12/12, and the final plan shows no changes.
+  - WS0 added the key-deletion step to HANDOFF's G4 final sequence and R26.
+- **Lesson:** under the project SCP, `force_destroy` on an IAM user is unusable. Any provider "force" cleanup that touches denied APIs fails at destroy, not apply, so only a real teardown catches it.
+- **Human checks:** James approved the push and MR. The new SNS subscription (created by the apply from empty) needs his confirmation.
