@@ -17,11 +17,12 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker shard duration | PASS: paths-per-shard 400; 100k-path shard 3–5 ms vs the 10 s timeout |
 | Burst vs 30 req/10 s | `make burst` | **006 (e77a626): PASS 11/11**: 1 × 202, 39 × 429 with Retry-After 1–2, no Qrypt 429, LAST item matches; steady spot check: 5 calls 2.49–3.03 s apart, all 200. Earlier, under 005: **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
-| Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
+| Cost runaway | `tests/deployed` MAX_PATHS 400; live configuration (read-only Lambda API, c1ab7ed) | PASS: MAX_PATHS 400 (c768aea). Live: exactly **1** event source mapping on `qmc-dev-worker` (`MaximumConcurrency` 5, batch 1, `ReportBatchItemFailures`), worker **reserved concurrency 10**; API env `MAX_PATHS` 10000000, `MAX_SHARDS` 50, `MAX_PATHS_PER_SHARD` 1000000, `QRYPT_MIN_GAP_MS` 2000 |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **PASS after a fix** (372583c → c1ab7ed): plan 0 → destroy blocked by the SCP (FINDING, fixed by MR !28) → destroy finished → **0 orphans** → apply from empty **65 s** → `e2e --fresh` 12/12 → plan 0 |
 | Empty / first run | `test_fresh_deployment_lists_no_jobs`; `make e2e ARGS=--fresh` | integration PASS; deployed after apply from empty (c1ab7ed): `GET /jobs` → `[]` PASS, unknown id → 404 PASS |
-| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); apply time **pending** (#34); 2 Qrypt 429 → 503 at 1.5 s pacing (R24) |
+| Benchmarks | `make bench` → `docs/BENCHMARKS.md` | PASS (6dcb3c2): warm p95 301 ms (< 800); 1M paths 0.18–0.46 s server-side (< 60 s); 2 Qrypt 429 → 503 at 1.5 s pacing (R24); apply from empty 65 s; idle cold submit 2.4 s client / 1.6 s server (reported separately) |
+| IAM completeness (QMC-105) | WS0's `iam_guard` allow-list fixture (`tests/conftest.py`, self-tested in `tests/core/test_iam_guard.py`), used by `tests/api/*`, `tests/worker/*` and every `tests/integration` handler call | PASS: CI `unit` job, 320 passed (pipeline 52736). Any AWS operation outside HANDOFF §8.3 fails the test, even one a handler swallowed |
 | Coverage ≥ 80% | GitLab CI pipeline 52736 `unit` job (main ea3820c) | PASS: 96.20% total (gate 80%), qmc_core 100.00% (gate 90%) |
 
 ## CI (GitLab pipeline 52736, main ea3820c)
@@ -537,4 +538,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | make bench (13:20 UTC; 58 submits, 56 × 200) | 56 |
 | drift-check e2e --fresh (integrator, 15:34 UTC) | 1 |
 | 006 burst + steady spot check (13:35–13:37 UTC) | 1 + 5 |
-| **Total** | **88** |
+| idle cold submit (15:55 UTC) | 1 |
+| **Total** | **89** |

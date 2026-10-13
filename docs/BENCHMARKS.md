@@ -9,6 +9,7 @@ Measured with `make bench` (`tools/bench.py`) on the deployed `dev` stack in us-
 | Submit API latency, warm | < 800 ms p95 | client p50 **251 ms**, p95 **301 ms** (n = 49); Lambda `Duration` p50 105 ms, p95 151 ms | PASS |
 | Job wall clock, 1,000,000 paths | < 60 s, 5 runs | server-side `completed_at − created_at`: **0.25, 0.46, 0.46, 0.18, 0.20 s**; client-observed ≤ 2.6 s | PASS |
 | Steady-state cost | $0 at 100 jobs/day of 1M paths | arithmetic in `docs/COST.md` (WS5), using the durations below | see COST.md |
+| Submit latency, cold (reported separately, HANDOFF §3) | n/a | one idle (≥ 18 min) cold submit: client **2,361 ms**; server Init 402 + Duration 1,206 ms | reported |
 | Environment rebuild | `terraform apply` from empty < 10 min | **65 s** for 33 resources (`make drift-check` step 4, 2026-10-13 15:33:06Z, build c1ab7ed; includes `make build` and `terraform init`) | PASS |
 
 ## Environment
@@ -52,7 +53,21 @@ Worker shard durations for 100,000 paths are 3–5 ms (shard items' `duration_ms
 
 - A cold submit therefore costs about **375 + 677 ≈ 1.05 s** on the server (init, plus the first SSM read and a new TLS connection to Qrypt), above the 800 ms warm target. The assignment's target is for warm submits, and HANDOFF §3 reports cold separately.
 - The worker's init includes the NumPy import and the SIMD self-check.
-- **Pending:** one client-timed submit after ≥ 15 min idle (`make bench ARGS="--cold --submits 0 --runs 0"`, 1 KiB).
+- **Idle cold submit, measured** 2026-10-13 15:55:00Z, build c1ab7ed, `uv run python tools/bench.py --cold --submits 0 --runs 0 --days 0.05`:
+  - Idle confirmed: no API REPORT line between 15:36 and 15:55Z, so at least 18 min idle.
+  - Cold start confirmed by the request's own REPORT line.
+
+  ```
+  POST /jobs 202: client 2361 ms; REPORT Duration 1206.1 ms, Init Duration 401.59 ms (request 2a37722b-5e81-4507-b320-ad5cc4f0afe9). Cold start confirmed.
+  REPORT RequestId: 2a37722b-…  Duration: 1206.10 ms  Billed Duration: 1608 ms  Memory Size: 512 MB  Max Memory Used: 103 MB  Init Duration: 401.59 ms
+  ```
+
+  Where the 1,206 ms went, from that request's own log lines:
+  - START 15:55:03.371 → Qrypt request start ≈ 15:55:04.211: **≈ 840 ms**. This covers the first SSM `GetParameter` with decryption, the limiter `UpdateItem` and the new SDK TLS connections, all cold.
+  - Qrypt: **248 ms** (`qrypt_call` latency_ms, new TLS to `api-eus.qrypt.com`).
+  - Writes and enqueue: **≈ 117 ms** (until 15:55:04.576).
+
+  The client's 2,361 ms adds ≈ 750 ms on top of the server's 1,608 ms (init + duration): a new TLS connection to the Function URL, DNS, and credential resolution on the laptop. **A cold submit therefore takes ≈ 1.6 s on the server and ≈ 2.4 s at the client, above the 800 ms warm target.** The assignment's target is for warm submits; HANDOFF §3 reports cold separately.
 
 ## Qrypt behaviour seen during the run (R24)
 
