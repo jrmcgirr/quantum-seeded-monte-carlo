@@ -480,3 +480,180 @@ def test_joblist_failure_when_queueing_fails_the_pending_job(api, invokes, monke
     assert (status, body["error"]["code"]) == (503, UNAVAILABLE.name)
     [job] = [j for j in api.items("JOB#") if j["sk"] == "META"]
     assert job["status"] == "FAILED" and not invokes
+
+
+# ---- Slot waits are not attempts (WS4's burst drill: 5 of 10 seeded) ---------------------------
+
+
+class Sim:
+    """A discrete-event clock: each seeder is a thread, but only one runs at a time, and
+    ``sleep`` hands control to whichever is due next, so seeders interleave as on Lambda."""
+
+    def __init__(self, now: float) -> None:
+        import itertools
+        import threading
+
+        self.now, self.heap, self.seq = now, [], itertools.count()
+        self.yielded = threading.Semaphore(0)
+
+    def _wait_until(self, at: float):
+        import heapq
+        import threading
+
+        go = threading.Event()
+        heapq.heappush(self.heap, (at, next(self.seq), go))
+        return go
+
+    def spawn(self, fn) -> None:
+        import threading
+
+        go = self._wait_until(self.now)
+
+        def body():
+            go.wait()
+            try:
+                fn()
+            finally:
+                self.yielded.release()
+
+        threading.Thread(target=body, daemon=True).start()
+
+    def sleep(self, seconds: float) -> None:
+        go = self._wait_until(self.now + seconds)
+        self.yielded.release()
+        go.wait()
+
+    def run(self) -> None:
+        import heapq
+
+        while self.heap:
+            at, _, go = heapq.heappop(self.heap)
+            self.now = max(self.now, at)
+            go.set()
+            self.yielded.acquire()
+
+
+@pytest.fixture
+def sim(api, monkeypatch):
+    import random
+
+    from qmc_api import handler, pending
+
+    sim = Sim(1_800_000_000.0)
+    monkeypatch.setattr(pending.time, "time", lambda: sim.now)  # the time module: every caller
+    monkeypatch.setattr(pending, "_sleep", sim.sleep)
+    monkeypatch.setattr(random, "uniform", random.Random(7).uniform)
+    monkeypatch.setenv("QRYPT_MIN_GAP_MS", "2000")
+    sim.events = []
+
+    class SimCtx:  # the API Lambda's 10 s timeout, on the simulated clock
+        def __init__(self) -> None:
+            self.end = sim.now + 10
+
+        def get_remaining_time_in_millis(self) -> int:
+            return int((self.end - sim.now) * 1000)
+
+    def invoke(job_id, attempt, **wait):
+        event = {"qmc_seed": job_id, "attempt": attempt, **wait}
+        sim.events.append(event)
+        sim.spawn(lambda: handler.handle(event, SimCtx()))
+
+    monkeypatch.setattr(pending, "invoke_seeder", invoke)
+    sim.Ctx = SimCtx
+    return sim
+
+
+def test_burst_of_ten_pending_jobs_all_seed_and_slot_waits_are_not_attempts(api, sim):
+    api.fake.failures = [UNAVAILABLE]  # the first submit fails; the other nine hit the gap
+    bodies = [api.call("POST", "/jobs", QUEUE)[2] for _ in range(10)]
+    assert {b["status"] for b in bodies} == {"PENDING_ENTROPY"}
+    assert [b["last_entropy_error"] for b in bodies[1:]] == ["ENTROPY_RATE_LIMITED"] * 9
+
+    sim.run()
+
+    jobs = [job_item(api, b["job_id"]) for b in bodies]
+    assert [j["status"] for j in jobs] == ["QUEUED"] * 10
+    assert {int(j["entropy_attempts"]) for j in jobs} == {1}  # slot waits never counted
+    assert {e["attempt"] for e in sim.events} == {1}
+    assert max(e.get("hop", 1) for e in sim.events) > 1  # some waits crossed invocations
+    assert max(e.get("hop", 1) for e in sim.events) < 16  # inside Lambda's recursion limit
+    assert api.fake.calls == 11  # the submit's failure, then one call per job
+    assert len(api.messages()) == 40
+
+
+def test_slot_wait_that_does_not_fit_reinvokes_the_same_attempt(api, sim, capsys):
+    from qmc_api import handler, submit
+
+    api.fake.failures = [UNAVAILABLE]
+    job_id = api.call("POST", "/jobs", QUEUE)[2]["job_id"]
+    sim.events.clear()
+    sim.heap.clear()
+    submit._take_slot(api.table, sim.now + 2)  # someone holds the gap when the backoff ends
+    ctx = sim.Ctx()
+    ctx.end = sim.now + 6.5  # room for the 2 s backoff, not for the wait after it
+
+    sim.spawn(lambda: handler.handle({"qmc_seed": job_id, "attempt": 1}, ctx))
+    sim.run()
+
+    first = sim.events[0]
+    assert (first["attempt"], first["hop"]) == (1, 2)
+    assert first["not_before_ms"] > (1_800_000_000 + 4) * 1000  # after the held gap ends
+    assert job_item(api, job_id)["status"] == "QUEUED"
+    assert int(job_item(api, job_id)["entropy_attempts"]) == 1
+
+
+def test_last_hop_fails_the_job_instead_of_reinvoking(api, sim):
+    from qmc_api import handler, pending, submit
+
+    api.fake.failures = [UNAVAILABLE]
+    job_id = api.call("POST", "/jobs", QUEUE)[2]["job_id"]
+    sim.events.clear()
+    sim.heap.clear()
+    submit._take_slot(api.table, sim.now + 1)
+    ctx = sim.Ctx()
+    ctx.end = sim.now + 4.5  # no room to wait out the gap here
+    event = {"qmc_seed": job_id, "attempt": 1, "hop": pending.MAX_HOPS, "not_before_ms": 0}
+
+    sim.spawn(lambda: handler.handle(event, ctx))
+    sim.run()
+
+    job = job_item(api, job_id)
+    assert job["status"] == "FAILED" and job["fail_reason"] == "ENTROPY_RATE_LIMITED"
+    assert sim.events == []
+
+
+def test_duplicate_delivery_during_a_slot_wait_spends_one_qrypt_call(api, sim, capsys):
+    from qmc_api import handler
+
+    api.fake.failures = [UNAVAILABLE]
+    job_id = api.call("POST", "/jobs", QUEUE)[2]["job_id"]
+    sim.heap.clear()
+    event = {"qmc_seed": job_id, "attempt": 1}
+    for _ in range(2):  # the same async event delivered twice
+        sim.spawn(lambda: handler.handle(event, sim.Ctx()))
+    sim.run()
+
+    assert job_item(api, job_id)["status"] == "QUEUED"
+    assert api.fake.calls == 2  # the submit's, then one seeding call: the twin waited, re-read
+    assert '"reason":"QUEUED"' in capsys.readouterr().out
+
+
+def test_failed_slot_wait_reinvoke_fails_the_job(api, sim, monkeypatch):
+    from qmc_api import handler, pending, submit
+
+    api.fake.failures = [UNAVAILABLE]
+    job_id = api.call("POST", "/jobs", QUEUE)[2]["job_id"]
+    sim.heap.clear()
+
+    def broken(*a, **k):
+        raise RuntimeError("throttled")
+
+    monkeypatch.setattr(pending, "invoke_seeder", broken)
+    submit._take_slot(api.table, sim.now + 2)
+    ctx = sim.Ctx()
+    ctx.end = sim.now + 6.5
+    sim.spawn(lambda: handler.handle({"qmc_seed": job_id, "attempt": 1}, ctx))
+    sim.run()
+
+    job = job_item(api, job_id)
+    assert job["status"] == "FAILED" and job["fail_reason"] == "ENTROPY_RATE_LIMITED"
