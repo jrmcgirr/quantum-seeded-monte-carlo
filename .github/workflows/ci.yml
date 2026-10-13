@@ -53,7 +53,8 @@ jobs:
       QMC_ENFORCE_PINNED_DISPATCH: "true"
       PYTHONDONTWRITEBYTECODE: "1"
     steps:
-      - run: dnf install -y -q tar gzip >/dev/null
+      # actions/checkout needs tar and gzip; this image's dnf has no -q flag.
+      - run: dnf install -y tar gzip >/dev/null
       - uses: actions/checkout@v4
       - run: pip install -q --no-compile --target /tmp/deps --require-hashes -r requirements/worker.txt
       - run: pip install -q --no-compile --target /tmp/deps pytest hypothesis "moto[dynamodb,sqs,ssm]"
