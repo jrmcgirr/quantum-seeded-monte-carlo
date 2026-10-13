@@ -55,7 +55,7 @@ All 7 jobs succeeded: `ssm-data-source-guard`, `lint`, `checkov`, `tflint`, `ter
 - Closed form (local, seed label committed in 12ac8a7 before the implementation existed): z = +0.868.
 - Golden antithetic shard: emulated x86 (`make test-golden`), native arm64, and native x86_64 (GitHub Actions run [38429804576](https://github.com/jrmcgirr/quantum-seeded-monte-carlo/actions/runs/38429804576), main 61d8b42, `golden` success on ubuntu-24.04) all agree. **Confirmed.**
 
-**Cost attribution: FAIL on the deployed spot check (finding, reported to WS0).** `cost_estimate.lambda_gb_seconds` = 0.473, against **2.381 GB-s from the job's own REPORT lines** (10 worker invocations, found by `job_id` → `request_id`, plus the submit): 5× low. Per invocation:
+**Cost attribution: FAIL on the deployed spot check (finding, reported to WS0). To be fixed by contract change 009 (MR !46): shards gain `invocation_ms` and `init_ms`, the estimate uses them, and the acceptance becomes worker GB-s within ±15% of REPORT Billed Duration × memory. Re-run pending.** `cost_estimate.lambda_gb_seconds` = 0.473, against **2.381 GB-s from the job's own REPORT lines** (10 worker invocations, found by `job_id` → `request_id`, plus the submit): 5× low. Per invocation:
 
 | | shard `duration_ms` (what the estimate uses) | worker REPORT `Duration` |
 | --- | --- | --- |

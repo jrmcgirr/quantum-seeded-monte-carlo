@@ -9,6 +9,14 @@ from qmc_core import cost as c
 
 from .conftest import SMALL_JOB, shard_index
 
+
+def billed_ms(shard) -> int:
+    """Contract change 009: invocation_ms + init_ms when recorded, else duration_ms."""
+    if "invocation_ms" in shard:
+        return int(shard["invocation_ms"]) + int(shard.get("init_ms", 0))
+    return int(shard["duration_ms"])
+
+
 KEYS = {
     "lambda_gb_seconds",
     "lambda_requests",
@@ -30,7 +38,7 @@ def test_cost_estimate_matches_stored_shards(app):
     shards = app.shard_items(job_id)
     n = SMALL_JOB["shards"]
     assert len(shards) == n
-    worker_gb_s = sum(int(s["duration_ms"]) / 1000 * int(s["memory_mb"]) / 1024 for s in shards)
+    worker_gb_s = sum(billed_ms(s) / 1000 * int(s["memory_mb"]) / 1024 for s in shards)
 
     gb_s = worker_gb_s + 0.125  # API: 512 MB × 0.25 s, × (1 + polls); the view passes polls = 0
     assert abs(cost["lambda_gb_seconds"] - gb_s) < 1e-12, (cost["lambda_gb_seconds"], gb_s)
@@ -60,7 +68,7 @@ def test_partial_job_has_a_cost_over_its_done_shards(app):
     assert view["status"] == "PARTIAL"
     stored = app.shard_items(job_id)
     assert len(stored) == SMALL_JOB["shards"] - 1
-    worker_gb_s = sum(int(s["duration_ms"]) / 1000 * int(s["memory_mb"]) / 1024 for s in stored)
+    worker_gb_s = sum(billed_ms(s) / 1000 * int(s["memory_mb"]) / 1024 for s in stored)
     assert abs(view["cost_estimate"]["lambda_gb_seconds"] - (worker_gb_s + 0.125)) < 1e-12
 
 
