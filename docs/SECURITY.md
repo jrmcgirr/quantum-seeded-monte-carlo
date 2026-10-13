@@ -13,7 +13,7 @@ Checked against `infra/` on `main` `855e8d6`, the deployed API Lambda's configur
 **If the token fails, nothing is written (I1).** Two live checks, both in TEST_RESULTS:
 
 - **Secret failure** (parameter missing): 503 `SECRET_UNAVAILABLE`, no job written.
-- **Decoy-token drill** (a wrong token stored under `/qmc/qrypt-api-key-invalid`, build `d0af0b1`): 503, no job written, and the `qmc-dev-seeding-failures` alarm went to ALARM. This drill ran before contract change 003, so it reported `QRYPT_QUOTA_EXHAUSTED`; the current code reports a Qrypt 403 as `QRYPT_FORBIDDEN` (D41). *TBD: cite the re-run with `QRYPT_FORBIDDEN`.*
+- **Decoy-token drill** (a wrong token stored under `/qmc/qrypt-api-key-invalid`, build `d0af0b1`): 503, no job written, and the `qmc-dev-seeding-failures` alarm went to ALARM. This drill ran before contract change 003, so it reported `QRYPT_QUOTA_EXHAUSTED`; the current code reports a Qrypt 403 as `QRYPT_FORBIDDEN` (D41). - **Re-run on build `855e8d6`** (integrator, 2026-10-13): a submit at 12:08:39Z under the decoy token returned 503 `QRYPT_FORBIDDEN`, "Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up.", and wrote no job. *TBD: cite WS4's full evidence in TEST_RESULTS.*
 
 ## IAM, one role per function
 
@@ -45,6 +45,7 @@ Both Lambda trust policies require `aws:SourceAccount` to be this account. The c
 - None of the four has an attached managed policy, and the grader belongs to no group.
 - The two Lambda trust policies allow `lambda.amazonaws.com` with `aws:SourceAccount` set to this account. The client role trusts only this account's root.
 - The grader user had **0 access keys** at the time of the check, as intended: its key is created last (D26).
+- The fail-closed drill temporarily pointed the API's `ssm:GetParameter` grant and `QRYPT_API_KEY_PARAM` at the decoy parameter, from 12:08:28Z until the revert at 12:09:10Z. The check above ran before the drill. At 12:09:29Z the `QryptToken` statement and `QRYPT_API_KEY_PARAM` were confirmed back on `/qmc/qrypt-api-key`.
 
 ## Function URL auth and the grader user
 
