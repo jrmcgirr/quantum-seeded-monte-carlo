@@ -73,6 +73,11 @@ variable "qrypt_max_per_window" {
   type        = number
 }
 
+variable "qrypt_window_s" {
+  description = "QRYPT_WINDOW_S (limiter window length, s)."
+  type        = number
+}
+
 variable "max_paths" {
   description = "MAX_PATHS."
   type        = number

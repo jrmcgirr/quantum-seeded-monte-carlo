@@ -59,3 +59,12 @@
   - Golden-hash emulation risk flagged to WS0 and WS4. WS4's `tools/shard_crosscheck.py` reproduced real-Lambda job edaff921 (10 shards × 100k) bit for bit under Rosetta x86 and natively on arm64; the native-x86 GitHub run is the last check.
   - Contract change 004 (HANDOFF 1.10): `qrypt_max_per_window` default 15 → 10 (Qrypt trial key, 1 call/s), validation 1–15 kept. `~/.qmc/dev.tfvars` doesn't override it. A `-lock=false` plan shows only `QRYPT_MAX_PER_WINDOW` "15" → "10" on qmc-dev-api, plus the `build_sha` bump on both Lambdas.
 - **Human checks:** James approved pushing MR !8 and this MR. The integrator applies from main; this session ran only read-only plans.
+
+## 2026-10-13, about 8:10–8:20 AM CT, WS1 Infrastructure (contract change 005)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - Contract change 004 applied by WS0 from main f3873f8 at 12:55:14Z: `QRYPT_MAX_PER_WINDOW` "15" → "10" plus the sha bump, 2 changed, then a plan with no changes.
+  - Contract change 005 (HANDOFF 1.11, accepted by James): new root variable `qrypt_window_s` (default 1, integer 1–10) passed to the api module as `QRYPT_WINDOW_S`; `qrypt_max_per_window` default 10 → 1 (1–15 validation kept). `validate` and tflint clean. A `-lock=false` plan shows only qmc-dev-api's env changing (`QRYPT_MAX_PER_WINDOW` "10" → "1", plus `QRYPT_WINDOW_S` = "1"), with the sha bump once committed.
+  - Deployment coupling: the API on main ignores `QRYPT_WINDOW_S` (10 s windows), so this must be applied together with WS2's limiter change; alone, cap 1 would mean 1 call per 10 s. Recorded in the commit message and the MR.
+- **Human checks:** James approved the push and MR; WS0 merges this with WS2's MR and applies from main.
