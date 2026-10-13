@@ -1,0 +1,20 @@
+# Copy to $HOME/.qmc/<env>.tfvars (chmod 600), never into the checkout. The Makefile passes it with -var-file.
+# No secrets belong here: the Qrypt token lives only in SSM (/qmc/qrypt-api-key), created out-of-band.
+
+alert_email = "you@example.com"
+
+# Invoke-only IAM user for graders. Its access key is created by CLI after apply, never by Terraform.
+# create_grader_user = true
+
+# Accept fault_injection.fail_shards (the forced-failure demo). Off by default.
+# enable_fault_injection = true
+
+# Worker reserved concurrency: a hard cap on concurrent workers. Leave it unset (null) unless the
+# account limit leaves at least 100 unreserved after the reservation, i.e. limit >= 100 + value:
+#   aws lambda get-account-settings --query AccountLimit.ConcurrentExecutions
+# New accounts often have 10 or 50, which reject any reservation; fan-out is still capped by
+# worker_max_concurrency (5). With a limit of 110 or more:
+# worker_reserved_concurrency = 10
+
+# Budgets are account-wide: only one environment per account should create one.
+# create_budget = false
