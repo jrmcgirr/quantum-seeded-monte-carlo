@@ -27,8 +27,10 @@ RETRYABLE_QRYPT = [
     "QRYPT_UNREACHABLE",
 ]
 FAIL_FAST_QRYPT = ["QRYPT_AUTH_FAILED", "QRYPT_FORBIDDEN", "QRYPT_BAD_REQUEST"]
-# Seconds slept before attempts 2, 3, 4 (PENDING_BACKOFF_MS "2000,4000,8000"); pinned with WS2.
-BACKOFF_S = [2.0, 4.0, 8.0]
+# Seconds slept before attempts 1–4: PENDING_BACKOFF_MS "2000,4000,8000" (last value repeated),
+# each clipped to remaining − QRYPT_DEADLINE_MS − 500 − 1000 ms (WS2). With the 10 s API timeout
+# (the harness Context reports 10,000 ms, like Lambda) the 8 s step is clipped to 6 s.
+BACKOFF_S = [2.0, 4.0, 6.0, 6.0]
 
 
 @pytest.fixture
@@ -42,11 +44,14 @@ def pending(app, monkeypatch):
     def capture(self, op, params):
         if self.meta.service_model.service_name == "lambda" and op == "Invoke":
             assert params["InvocationType"] == "Event"
+            if app.invoke_error:
+                raise app.invoke_error
             invokes.append(json.loads(params["Payload"]))
             return {"StatusCode": 202}
         return inner(self, op, params)
 
     monkeypatch.setattr(BaseClient, "_make_api_call", capture)
+    app.invoke_error = None
     monkeypatch.setattr(sys.modules["qmc_api.pending"], "_sleep", sleeps.append)
     app.invokes, app.sleeps = invokes, sleeps
     return app
@@ -147,7 +152,7 @@ def test_default_reject_is_unchanged(pending):
     assert [i for i in pending.table.scan()["Items"] if not i["pk"].startswith("RL#")] == []
 
 
-def test_exhaustion_ends_failed_naming_the_cause(pending):
+def test_exhaustion_ends_failed_naming_the_cause(pending, capsys):
     failing_source(*["QRYPT_SERVER_ERROR"] * 10)
     job_id = pending.call("POST", "/jobs", QUEUE).body["job_id"]
     for _ in range(10):  # follow the self-invokes until they stop
@@ -158,7 +163,9 @@ def test_exhaustion_ends_failed_naming_the_cause(pending):
             break
     item = pending.job_item(job_id)
     assert item["status"] == "FAILED"
-    assert item["fail_reason"] and "QRYPT_SERVER_ERROR" in str(item.get("last_entropy_error", ""))
+    assert item["fail_reason"] == item["last_entropy_error"] == "QRYPT_SERVER_ERROR"
+    emf = [ln for ln in capsys.readouterr().out.splitlines() if '"SeedingFailures":1' in ln]
+    assert len(emf) == 1, emf  # once, at the end, not per attempt
     assert [e["attempt"] for e in pending.invokes] == [1, 2, 3, 4]  # PENDING_MAX_ATTEMPTS 4
     assert pending.sleeps == BACKOFF_S, pending.sleeps  # PENDING_BACKOFF_MS "2000,4000,8000"
     assert "master_seed_hex" not in item and pending.receive_all() == []
@@ -197,3 +204,53 @@ def test_seeded_pending_replays_bit_identically(pending):
     assert r.status == 202
     pending.run_all(pending.receive_all())
     assert pending.get(r.body["job_id"])["replay_check"]["bit_identical"] is True
+
+
+def test_backoff_unclipped_with_enough_time_left():
+    from qmc_api.pending import backoff_s
+
+    class Plenty:
+        def get_remaining_time_in_millis(self):
+            return 12_000
+
+    assert [backoff_s(n, Plenty()) for n in (1, 2, 3, 4)] == [2.0, 4.0, 8.0, 8.0]
+
+
+def test_duplicate_or_late_seeder_event_writes_nothing(pending):
+    failing_source("QRYPT_SERVER_ERROR")
+    job_id = pending.call("POST", "/jobs", QUEUE).body["job_id"]
+    event = pending.invokes[-1]
+    gap_elapsed(pending)
+    seed(pending, event)
+    before, n_invokes = pending.job_item(job_id), len(pending.invokes)
+    gap_elapsed(pending)
+    seed(pending, event)  # redelivered after the job left PENDING_ENTROPY
+    assert pending.job_item(job_id) == before and len(pending.invokes) == n_invokes
+
+
+def test_seeder_past_pending_until_fails_the_job(pending):
+    failing_source("QRYPT_SERVER_ERROR")
+    job_id = pending.call("POST", "/jobs", QUEUE).body["job_id"]
+    pending.table.update_item(
+        Key={"pk": f"JOB#{job_id}", "sk": "META"},
+        UpdateExpression="SET pending_until = :t",
+        ExpressionAttributeValues={":t": 1},
+    )
+    gap_elapsed(pending)
+    seed(pending, pending.invokes[-1])
+    item = pending.job_item(job_id)
+    assert item["status"] == "FAILED" and "master_seed_hex" not in item
+
+
+def test_failed_self_invoke_fails_the_job_and_returns_the_original_error(pending):
+    from botocore.exceptions import ClientError
+
+    pending.invoke_error = ClientError(
+        {"Error": {"Code": "ServiceException", "Message": "x"}}, "Invoke"
+    )
+    failing_source("QRYPT_SERVER_ERROR")
+    r = pending.call("POST", "/jobs", QUEUE)
+    assert r.status == 503 and r.body["error"]["code"] == "QRYPT_SERVER_ERROR"
+    pending_items = [i for i in pending.table.scan()["Items"] if i["sk"] == "META"]
+    assert [i["status"] for i in pending_items] == ["FAILED"]  # never left PENDING_ENTROPY
+    assert pending.receive_all() == []
