@@ -89,26 +89,27 @@ def main() -> int:
         {w: n for w, n in slots.items() if n},
     )
 
-    # qrypt_call log lines: one per HTTP attempt (HANDOFF §9.3).
+    # qrypt_call log lines: one per HTTP attempt (HANDOFF §9.3). Every 202 and every 503 QRYPT_*
+    # reached Qrypt at least once, so wait for at least that many lines, then 30 s more for any
+    # retry's line (stopping at the first line count let a Qrypt 429 go unseen).
+    reached = codes[202] + sum(n for c, n in errors.items() if (c or "").startswith("QRYPT_"))
     pattern = '{ $.event = "qrypt_call" }'
-    lines, _ = poll(
+    poll(
         "qrypt_call lines",
-        lambda: (
-            ev
-            if len(ev := log_events(log_group("api"), pattern, t0 - 1, t1 + 30)) >= codes[202]
-            else None
-        ),
+        lambda: len(log_events(log_group("api"), pattern, t0 - 1, t1 + 30)) >= reached,
         180,
         10,
     )
+    time.sleep(30)
+    lines = log_events(log_group("api"), pattern, t0 - 1, t1 + 30)
     ts = sorted(e["timestamp"] / 1000 for e in lines)
     per_window = Counter(int(t // w_s) * w_s for t in ts)
     statuses = Counter(json.loads(e["message"]).get("http_status") for e in lines)
     rolling = max(sum(1 for u in ts if t <= u < t + 10) for t in ts)
     check(
-        "qrypt_call lines ≥ accepted jobs",
-        len(ts) >= codes[202],
-        f"{len(ts)} calls, {codes[202]} jobs",
+        "qrypt_call lines ≥ submits that reached Qrypt",
+        len(ts) >= reached,
+        f"{len(ts)} calls, {reached} submits reached Qrypt ({codes[202]} accepted)",
     )
     # Guards: the slots read must cover the calls seen (a changed RL key format would otherwise
     # make the slot check pass on zeros), and Qrypt itself must never have said 429.
