@@ -112,6 +112,5 @@ checkov:
   extends: .has_infra
   stage: security
   image: { name: "bridgecrew/checkov:3.3.28", entrypoint: [""] }
-  allow_failure: true # until QMC-119
   script:
     - checkov -d infra --quiet --compact

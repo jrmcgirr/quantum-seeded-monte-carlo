@@ -95,7 +95,6 @@ jobs:
 
   checkov:
     runs-on: ubuntu-24.04
-    continue-on-error: true # until QMC-119
     steps:
       - uses: actions/checkout@v4
       - id: infra
