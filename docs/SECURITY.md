@@ -10,7 +10,7 @@ Checked against `infra/` on `main` `855e8d6`, the deployed API Lambda's configur
 
 **Why out-of-band:** anything Terraform reads or writes lands in its state file in plain text. The trap is `data "aws_ssm_parameter"`, which looks harmless but stores the **decrypted** value in state. It is banned (HANDOFF §8.1, R10), and CI's `ssm-data-source-guard` job fails the pipeline if one appears. A search of `infra/` on `855e8d6` finds none.
 
-**If the token fails, nothing is written (I1).** Two live checks, both in TEST_RESULTS:
+**If the token fails, nothing is written (I1).** This holds even for a submit that opts into `on_entropy_failure: "queue"` (contract change 008): `QRYPT_AUTH_FAILED`, `QRYPT_FORBIDDEN`, `QRYPT_BAD_RESPONSE`, `QRYPT_BAD_REQUEST` and `SECRET_UNAVAILABLE` always fail fast. Only rate limits, Qrypt 5xx, timeouts and network errors can park a job as `PENDING_ENTROPY`, and that record holds no seed. Two live checks, both in TEST_RESULTS:
 
 - **Secret failure** (parameter missing): 503 `SECRET_UNAVAILABLE`, no job written.
 - **Decoy-token drill** (a wrong token stored under `/qmc/qrypt-api-key-invalid`, build `d0af0b1`): 503, no job written, and the `qmc-dev-seeding-failures` alarm went to ALARM. This drill ran before contract change 003, so it reported `QRYPT_QUOTA_EXHAUSTED`; the current code reports a Qrypt 403 as `QRYPT_FORBIDDEN` (D41). - **Re-run on build `855e8d6`** (integrator, 2026-10-13): a submit at 12:08:39Z under the decoy token returned 503 `QRYPT_FORBIDDEN`, "Qrypt refused the request (403): the token is invalid or expired, or the entropy quota is used up.", and wrote no job. *TBD: cite WS4's full evidence in TEST_RESULTS.*
@@ -24,10 +24,13 @@ Every policy is an `aws_iam_policy_document`. No action or resource contains `*`
 | API role `qmc-dev-api` | `dynamodb:GetItem`, `BatchGetItem`, `PutItem`, `UpdateItem`, `Query` | the table ARN |
 | | `sqs:SendMessage` | the shard queue ARN |
 | | `ssm:GetParameter` | the token parameter ARN |
+| | `lambda:InvokeFunction` (async self-invoke of the PENDING_ENTROPY seeder, contract change 008) | its **own** function ARN |
 | | `logs:CreateLogStream`, `logs:PutLogEvents` | `<API log group ARN>:*` |
+| | `states:StartExecution`, **only when `enable_step_functions = true`** (contract change 007) | the watcher state machine ARN |
 | Worker role `qmc-dev-worker` | `sqs:ReceiveMessage`, `DeleteMessage`, `GetQueueAttributes`, `ChangeMessageVisibility` | the shard queue ARN |
 | | `dynamodb:PutItem`, `UpdateItem`, `Query` | the table ARN |
 | | `logs:CreateLogStream`, `logs:PutLogEvents` | `<worker log group ARN>:*` |
+| Watcher role `qmc-dev-watcher`, **only when `enable_step_functions = true`** | `dynamodb:GetItem` | the table ARN |
 | Client role `qmc-dev-client`, grader user `qmc-dev-grader` | `lambda:InvokeFunctionUrl` if `lambda:FunctionUrlAuthType = AWS_IAM`; `lambda:InvokeFunction` if `lambda:InvokedViaFunctionUrl = true` | the API function ARN only |
 
 What is deliberately absent, and why:
@@ -37,7 +40,7 @@ What is deliberately absent, and why:
 - **No X-Ray.** Its write actions also need `*` (D18).
 - **No `logs:CreateLogGroup`.** Terraform creates every log group before its function (R11).
 
-Both Lambda trust policies require `aws:SourceAccount` to be this account. The client role trusts only this account's root, so only identities in this account that are allowed to assume it can use it.
+Both Lambda trust policies require `aws:SourceAccount` to be this account. The watcher role, when created, trusts `states.amazonaws.com` with `aws:SourceAccount` and `aws:SourceArn` set to the watcher's own ARN. The client role trusts only this account's root, so only identities in this account that are allowed to assume it can use it.
 
 **Checked on the deployed stack** (2026-10-13, build `855e8d6`, read-only IAM calls `GetRole`, `ListRolePolicies` / `GetRolePolicy`, `ListAttachedRolePolicies`, `ListUserPolicies` / `GetUserPolicy`, `ListAttachedUserPolicies`, `ListGroupsForUser`, `ListAccessKeys`):
 
@@ -45,6 +48,7 @@ Both Lambda trust policies require `aws:SourceAccount` to be this account. The c
 - None of the four has an attached managed policy, and the grader belongs to no group.
 - The two Lambda trust policies allow `lambda.amazonaws.com` with `aws:SourceAccount` set to this account. The client role trusts only this account's root.
 - The grader user had **0 access keys** at the time of the check, as intended: its key is created last (D26).
+- **Re-checked after contract changes 007 and 008** (`main` `581563d`, applied 18:09Z; `GetRolePolicy`, `GetFunctionEventInvokeConfig`, `ListStateMachines`): the API policy has exactly the five statements `Table`, `ShardQueue`, `QryptToken`, `SelfInvoke` (`lambda:InvokeFunction` on `qmc-dev-api` only) and `Logs`. There is no `StartWatcher` statement and no state machine, because the watcher is off in `dev`. The self-invoke's event-invoke config has `MaximumRetryAttempts` 0 and `MaximumEventAgeInSeconds` 300, so Lambda never retries a seeder event; the seeder's own attempt limit (`PENDING_MAX_ATTEMPTS` 4) bounds the loop.
 - The fail-closed drill temporarily pointed the API's `ssm:GetParameter` grant and `QRYPT_API_KEY_PARAM` at the decoy parameter, from 12:08:28Z until the revert at 12:09:10Z. The check above ran before the drill. At 12:09:29Z the `QryptToken` statement and `QRYPT_API_KEY_PARAM` were confirmed back on `/qmc/qrypt-api-key`.
 
 ## Function URL auth and the grader user
@@ -92,7 +96,7 @@ With the Terraform default (`false`), the field is rejected with `FAULT_INJECTIO
 
 ## Checkov suppressions
 
-Checkov is a **blocking** job in both CI systems: GitLab CI and GitHub Actions run `checkov -d infra` (3.3.28) with no `allow_failure` or `continue-on-error`, so a new finding fails the pipeline and, because `main` is protected, blocks the merge (QMC-119, MR !37; D42). Re-run on `main` `d9b8531`: **137 passed, 0 failed, 20 skipped**. The 20 skips cover 13 checks. Each is suppressed inline with the reason below, quoted from `infra/modules/*/main.tf`.
+Checkov is a **blocking** job in both CI systems: GitLab CI and GitHub Actions run `checkov -d infra` (3.3.28) with no `allow_failure` or `continue-on-error`, so a new finding fails the pipeline and, because `main` is protected, blocks the merge (QMC-119, MR !37; D42). Re-run on `main` `581563d` (after contract changes 007 and 008): **140 passed, 0 failed, 22 skipped**. The 22 skips cover 15 checks. Each is suppressed inline with the reason below, quoted from `infra/modules/*/main.tf`.
 
 | Check | Resources | Reason |
 | --- | --- | --- |
@@ -108,5 +112,7 @@ Checkov is a **blocking** job in both CI systems: GitLab CI and GitHub Actions r
 | `CKV_AWS_158` log group CMK | both log groups | A customer-managed KMS key costs $1/month (I7); CloudWatch Logs encrypts at rest by default |
 | `CKV_AWS_173` Lambda env encryption | both Lambdas | No secrets in the environment (the Qrypt token stays in SSM); default AWS-managed encryption; a CMK costs $1/month |
 | `CKV_AWS_272` code signing | both Lambdas | Code signing needs S3 and a signing profile; zips are deterministic and hashed in `build/manifest.json` |
+| `CKV_AWS_284` Step Functions X-Ray tracing | watcher state machine (only when enabled) | X-Ray tracing off (D18); the machine only polls one item |
+| `CKV_AWS_285` Step Functions execution logging | watcher state machine (only when enabled) | Execution logging off by design (007): no log group, no ingestion cost; execution history is kept by Step Functions |
 | `CKV_AWS_338` log retention ≥ 1 year | both log groups | 14-day retention by design (I7, HANDOFF §9.3); results live in DynamoDB, not logs |
 | `CKV2_AWS_16` DynamoDB autoscaling | table | Fixed 10/10 provisioned capacity is the free tier (D7); autoscaling could leave it |

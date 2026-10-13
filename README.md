@@ -167,6 +167,14 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 
 **Antithetic variates (opt-in).** Add `"variance_reduction": "antithetic"` to a submit (with an even `paths` ≥ 4). Each pair `(z, −z)` counts as one sample, so `result.n` is the number of pairs. At 1M paths the standard error drops from 0.0147 to 0.0104, a ratio of 0.707, so the variance is about halved at no extra simulation cost. The estimate was z = +0.868 from Black-Scholes, with a seed fixed before the code existed (D15, `tests/correctness/test_antithetic.py`). *TBD: a deployed antithetic job and its replay.*
 
+**Queue instead of reject (opt-in PENDING_ENTROPY).** By default a submit that cannot get entropy fails closed. Add `"on_entropy_failure": "queue"` (or `--queue` on the client) and a *retryable* failure (our own 429 `ENTROPY_RATE_LIMITED`, a Qrypt 429 or 5xx, a timeout or a network error) returns 202 with `"status": "PENDING_ENTROPY"` instead:
+
+```bash
+uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10 --queue
+```
+
+The job holds no seed yet. The API retries in the background (4 attempts, backoff 2, 4, 8 s) and the job becomes `QUEUED` only with a Qrypt-derived seed, or ends `FAILED` naming the cause; a GET after 120 s fails a job whose retry was lost. An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409. Contract change 008; *TBD: WS4's drill.*
+
 ## How bit-identical replay works, and when it would not hold
 
 *TBD: seed chain (Qrypt block → HKDF-SHA256 master seed → `SeedSequence(master, spawn_key=(i,))` → `PCG64DXSM`; 256-bit stored seed, 128-bit RNG state); pinned NumPy, x86_64, `NPY_DISABLE_CPU_FEATURES`, fixed chunk size, `math.fsum`, hex-float storage; the fingerprint and what a mismatch means; replay ×20 evidence from TEST_RESULTS.*
@@ -240,8 +248,8 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 | Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox |
 | Ephemeral per-branch environments | **Parked** (D46) | The account's SCP denies creating OIDC providers, so CI would need a long-lived admin-level key in a public repo; per-environment alarms and metrics would exceed the free tier's 10 |
 | CI deploys | **Out** (D21) | Same credential problem; every apply runs from `main` by the integrator (D33) |
-| Step Functions watcher | Being added, **off by default** (D21, contract change 007) | *TBD when it lands* |
-| PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | Being added, **opt-in** (D21, contract change 008) | *TBD when it lands* |
+| Step Functions watcher | **Built, off by default** (`enable_step_functions = true` in your tfvars to try it; D21, contract change 007) | Polls each job every 10 s until it is terminal, so its execution history shows each job's outcome. Free only up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day ([docs/COST.md](docs/COST.md)) |
+| PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | **Built, opt-in per request** (D21, contract change 008) | Off unless a submit asks for it, so the default stays strict fail-closed (I1). At most 10 pending jobs and 4 attempts over about 2 minutes |
 
 Other known limits:
 

@@ -87,6 +87,11 @@ Every finished job now carries a `cost_estimate` (QMC-126).
 - The cause: the estimate times each shard only up to the result write. The work after it is billed but not recorded: the put itself, the done-set update, EMF, and the finalize on the last shard. That is about 15–45 ms per warm call.
 - *TBD: WS0 and James are deciding the fix.* The arithmetic in this note uses the measured durations, not `cost_estimate`.
 
+## Optional features (contract changes 007 and 008)
+
+- **Step Functions watcher: off by default, so $0.** In `dev`, `ListStateMachines` returns none (after the apply of `main` `581563d`). Switched on, each job uses about 4–7 state transitions (contract change 007): a job finishes inside the first 10 s wait, so a typical run is Wait → GetJob → Check → Succeed, and Step Functions bills retries as extra transitions. Standard workflows get **4,000 transitions a month, always free**, then **$0.000025 each** in us-east-2 (Price List API `GetProducts`, `AmazonStates`, usage type `USE2-StateTransition`; [Step Functions pricing](https://aws.amazon.com/step-functions/pricing/)). That covers about 570–1,000 jobs a month (4,000 ÷ 7 to 4,000 ÷ 4). At 3,300 jobs a month it would be 13,200–23,100 transitions, **≈ $0.23–$0.48 a month**, which is why it stays off.
+- **PENDING_ENTROPY: no new resource.** A queued submit costs at most 4 extra API invocations (the seeder's attempts, each sleeping 2, 4 or 8 s first) and a few DynamoDB writes inside the provisioned 10/10. No queue, mapping, metric or alarm is added. The seeder calls Qrypt the same way a submit does, so it spends the same 1 KiB per success.
+
 ## At rest
 
 With no jobs, the only recurring usage is:
@@ -106,7 +111,7 @@ Nothing is billed per hour: no NAT, load balancer, EC2, RDS or API Gateway. Prov
 | ≤ 10 custom metrics and ≤ 10 alarms across every environment, metrics with no dimensions | The free tier counts per account, and each dimension combination is a separate metric |
 | No customer-managed KMS keys | $1 a month each, the whole Budget |
 | 14-day log retention on every log group, created by Terraform | "Never expire" grows storage forever; Lambda's auto-created groups survive destroy |
-| No Step Functions, NAT, ALB, EC2, RDS, API Gateway, Secrets Manager, S3, ECR or X-Ray | Not always-free, or not needed |
+| No NAT, ALB, EC2, RDS, API Gateway, Secrets Manager, S3, ECR or X-Ray; Step Functions only as the opt-in watcher, off by default (007) | Not always-free, or not needed; the watcher is free only up to about 570–1,000 jobs a month |
 | `MAX_PATHS`, `MAX_PATHS_PER_SHARD`, worker reserved concurrency (10) and `maximum_concurrency` (5) | Stop a runaway request from turning into a runaway bill |
 | Qrypt limiter (one call per 2 s, D10) | Protects the external quota |
 | $1 monthly Budget with an alert at the first cent | Backstop: any spend at all sends an email |

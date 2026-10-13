@@ -161,9 +161,10 @@ Each entry gives what we chose, the alternatives, and why. The binding list is `
   - Checkov as a blocking CI job (QMC-119).
   - Per-job cost attribution (QMC-126).
   - Antithetic variates (QMC-108).
-  - An **optional Step Functions watcher, off by default** (QMC-127, contract change 007).
-  - **Opt-in PENDING_ENTROPY** via an async self-invoke with backoff (QMC-128, contract change 008).
   - *TBD: each entry is updated as it lands, with its evidence.*
+- **Landed, drills pending:**
+  - An **optional Step Functions watcher, off by default** (QMC-127, contract change 007). MR !50; applied from `main` `581563d` at 18:09Z with it off, so no state machine exists in `dev`. Its two Checkov skips (`CKV_AWS_284`, `CKV_AWS_285`) bring Checkov to 140/0/22 (docs/SECURITY.md). Free up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day (docs/COST.md). *TBD: WS4's on/off drill.*
+  - **Opt-in PENDING_ENTROPY** via an async self-invoke with backoff (QMC-128, contract change 008). MR !51 and WS2's seeder; applied from `main` `581563d`. The deployed API has the self-invoke grant on its own ARN only, `PENDING_MAX_ATTEMPTS` 4, backoff 2/4/8 s, `PENDING_MAX_AGE_S` 120, `MAX_PENDING_ENTROPY` 10, and an event-invoke config with 0 retries. *TBD: WS4's PENDING burst drill.*
 - **Parked, with reasons:** portfolio VaR (D45) and ephemeral per-branch environments (D46). James may revisit them later.
 - **Out:** CI deploys.
 - **Original choice (2026-10-12):** dashboard, Checkov in CI, cost attribution and antithetic variates. Not attempted then:
