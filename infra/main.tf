@@ -1,7 +1,7 @@
 locals {
   name              = "qmc-${var.env}"
   metrics_namespace = "QMC/${var.env}"
-  # Built as a string: never data "aws_ssm_parameter", which writes the decrypted token into state (I6).
+  # Built as a string: never the SSM parameter data source, which writes the decrypted token into state (I6).
   qrypt_param_arn = "arn:aws:ssm:${var.region}:${data.aws_caller_identity.current.account_id}:parameter${var.qrypt_api_key_param_name}"
 }
 
