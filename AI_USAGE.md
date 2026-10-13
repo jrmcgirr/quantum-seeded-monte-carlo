@@ -7,7 +7,7 @@ WS5 completes this file before submission, folding in each workstream's log from
 | Tool | Model | Used for |
 | --- | --- | --- |
 | Claude (claude.ai, linked to James's computer) | Claude Opus 5.5 (`claude-opus-5-5`) | Research (five research sub-agents and a report writer), decision walk-through, PRD, handoff, roadmap, workstream prompts, GitLab plan, independent plan review |
-| Claude Code | *(per session)* | Workstream implementation |
+| Claude Code | Claude Opus 5.5 (`claude-opus-5-5`) for WS0 and WS5 so far; *(other workstreams at G4)* | Workstream implementation, Day 0 account setup, docs |
 
 ## How AI claims were verified
 
