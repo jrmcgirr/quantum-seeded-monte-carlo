@@ -257,3 +257,72 @@ def test_failed_self_invoke_fails_the_job_and_returns_the_original_error(pending
     pending_items = [i for i in pending.table.scan()["Items"] if i["sk"] == "META"]
     assert [i["status"] for i in pending_items] == ["FAILED"]  # never left PENDING_ENTROPY
     assert pending.receive_all() == []
+
+
+class Short(Context):
+    """4.5 s left: room for a 0.5 s wait only (− QRYPT_DEADLINE_MS 2.5 s − 0.5 s − 1 s)."""
+
+    def get_remaining_time_in_millis(self):
+        return 4_500
+
+
+def seed_with(app, event, context):
+    with app.iam_guard("api"):
+        assert app.api.handle(event, context) is None
+
+
+def queued_behind_the_gap(app):
+    """A PENDING job whose seeder will find our 2 s slot taken (the submit's own call took it)."""
+    failing_source("QRYPT_SERVER_ERROR")
+    job_id = app.call("POST", "/jobs", QUEUE).body["job_id"]
+    return job_id, app.job_item(job_id).get("entropy_attempts")
+
+
+def test_refused_slot_waits_in_process_without_spending_an_attempt(pending, monkeypatch):
+    """James's fix after the live burst: our own gap is waited out (retry_after + 0–2 s), not an
+    attempt. From the second sleep on (the first is the backoff) the fake sleep advances the clock
+    by what it slept, as a real one would; it may not write (the seeder runs under the IAM guard)."""
+    import time
+
+    job_id, before = queued_behind_the_gap(pending)
+    real, skew = time.time, [0.0]
+    monkeypatch.setattr(time, "time", lambda: real() + skew[0])
+
+    def sleep(s):
+        pending.sleeps.append(s)
+        if len(pending.sleeps) >= 2:
+            skew[0] += s
+
+    monkeypatch.setattr(sys.modules["qmc_api.pending"], "_sleep", sleep)
+    seed(pending, pending.invokes[-1])
+    item = pending.job_item(job_id)
+    assert item["status"] == "QUEUED" and len(item["master_seed_hex"]) == 64
+    assert item.get("entropy_attempts") == before  # the refusal spent nothing
+    assert pending.invokes == [{"qmc_seed": job_id, "attempt": 1}]  # waited in process
+    assert pending.sleeps[0] == 2.0 and 1.0 <= pending.sleeps[1] <= 4.0, pending.sleeps
+
+
+def test_refused_slot_that_does_not_fit_hops_with_the_same_attempt(pending):
+    job_id, before = queued_behind_the_gap(pending)
+    seed_with(pending, pending.invokes[-1], Short())
+    item = pending.job_item(job_id)
+    assert item["status"] == "PENDING_ENTROPY" and item.get("entropy_attempts") == before
+    assert_pending_unseeded(pending, job_id)
+    hop = pending.invokes[-1]
+    assert {k: hop[k] for k in ("qmc_seed", "attempt", "hop")} == {
+        "qmc_seed": job_id,
+        "attempt": 1,
+        "hop": 2,
+    }
+    assert int(hop["not_before_ms"]) > 0
+
+
+def test_hop_limit_fails_closed_naming_the_cause(pending):
+    """At hop 15 (Lambda drops a ~16-deep self-invoke chain) the job fails, never re-invokes."""
+    job_id, _ = queued_behind_the_gap(pending)
+    n = len(pending.invokes)
+    seed_with(pending, {"qmc_seed": job_id, "attempt": 1, "hop": 15}, Short())
+    item = pending.job_item(job_id)
+    assert item["status"] == "FAILED" and item["fail_reason"] == "ENTROPY_RATE_LIMITED"
+    assert "master_seed_hex" not in item and len(pending.invokes) == n
+    assert pending.receive_all() == []

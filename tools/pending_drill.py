@@ -92,13 +92,13 @@ def main() -> int:
         json.loads(e["message"])["event"]
         for e in log_events(
             api,
-            '{ $.event = "entropy_seeded" || $.event = "duplicate_seeder" || $.event = "seeder_error" || $.event = "seeding_failed" || $.event = "seeder_invoke_failed" }',
+            '{ $.event = "entropy_seeded" || $.event = "duplicate_seeder" || $.event = "seeder_error" || $.event = "seeding_failed" || $.event = "seeder_invoke_failed" || $.event = "seeder_hops_exhausted" }',
             t0 - 1,
             t1 + 30,
         )
     )
     check(
-        "seeder log: entropy_seeded only (no duplicate_seeder, seeder_error, seeding_failed, seeder_invoke_failed)",
+        "seeder log: entropy_seeded only (no duplicate_seeder, seeder_error, seeding_failed, seeder_invoke_failed, seeder_hops_exhausted)",
         set(events) <= {"entropy_seeded"},
         dict(events),
     )
