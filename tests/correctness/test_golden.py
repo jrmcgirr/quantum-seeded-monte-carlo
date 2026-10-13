@@ -17,10 +17,11 @@ SEED = frozen_seed("qmc-golden-test-v1")
 SHARD_INDEX = 0
 SHARD_PATHS = 100_000
 
-# Filled in once from the Lambda image's output (QMC-140). None until then: the test fails
-# and prints the values to commit.
-GOLDEN_SUM_HEX: str | None = None
-GOLDEN_SUM_SQ_HEX: str | None = None
+# PROVISIONAL (2026-10-13): `make test-golden` on Docker amd64 under Rosetta ("VirtualApple",
+# avx2+fma, exp → X86_V3, NumPy 2.5.4). Native macOS arm64 gives the same bits. Authoritative
+# once a real x86 CI golden job (or e2e on Lambda) agrees; never regenerate without James.
+GOLDEN_SUM_HEX: str | None = "0x1.fdcf3646e51c2p+19"
+GOLDEN_SUM_SQ_HEX: str | None = "0x1.f2c02fc1b1bcep+24"
 
 
 def test_exp_target_is_not_avx512():
