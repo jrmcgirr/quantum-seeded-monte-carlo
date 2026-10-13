@@ -51,7 +51,6 @@ def test_qrypt_failure_rejects_and_writes_nothing(app):
     """I1 fail closed: a Qrypt 401 names the cause, and no job, list entry or message exists.
     (Only the limiter slot may be written: HANDOFF §7.5 step 2.)"""
     import qmc_api.qrypt as qrypt
-
     from qmc_core.errors import ErrorCode
 
     failing = qrypt.FakeEntropySource(
