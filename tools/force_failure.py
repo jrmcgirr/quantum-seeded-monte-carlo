@@ -123,6 +123,13 @@ def main() -> int:
             "run make warm-dlq and wait 15 min (R23), or pass --no-warm-check"
         )
         return 2
+    if args.purge_first and (dlq_depth() or alarm_state() == "ALARM"):
+        print(f"setup: purging DLQ (depth {dlq_depth()}, {ALARM} {alarm_state()})", flush=True)
+        aws("sqs").purge_queue(QueueUrl=outputs()["dlq_url"])
+        _, secs = poll(
+            f"{ALARM} back to OK", lambda: dlq_depth() == 0 and alarm_state() == "OK", 20 * 60, 15
+        )
+        print(f"setup: DLQ empty and {ALARM} OK after {secs:.0f} s", flush=True)
     check(
         "precondition: DLQ empty, alarm not ALARM",
         dlq_depth() == 0 and alarm_state() != "ALARM",
