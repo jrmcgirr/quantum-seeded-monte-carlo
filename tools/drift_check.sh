@@ -34,7 +34,13 @@ orphans() {
 }
 
 [ "$(git rev-parse --abbrev-ref HEAD)" = main ] || { echo "run from the main checkout (D33)"; exit 1; }
-step "1/6 plan (expect no changes)"; plan_zero
+# HANDOFF §4.1: "no changes" holds only at the sha of the last apply (QMC_BUILD_SHA).
+make -s build >/dev/null
+built="$(python3 -c 'import json; print(json.load(open("build/manifest.json"))["git_sha"])')"
+deployed="$(uv run python -c 'from clients.qmc import request; print(request("GET", "/health")[2].get("build_sha"))')"
+[ "$built" = "$deployed" ] || {
+  echo "deployed build_sha $deployed != this checkout $built: make apply first, then rerun"; exit 1; }
+step "1/6 plan at build_sha $built (expect no changes)"; plan_zero
 read -r -p "Destroy and re-apply qmc-$ENV (region $AWS_REGION)? Type the env name to proceed: " answer
 [ "$answer" = "$ENV" ] || { echo "aborted"; exit 1; }
 step "2/6 destroy"; make destroy ENV="$ENV" EXTRA_VARS=-auto-approve
