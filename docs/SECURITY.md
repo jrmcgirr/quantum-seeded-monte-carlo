@@ -92,7 +92,7 @@ With the Terraform default (`false`), the field is rejected with `FAULT_INJECTIO
 
 ## Checkov suppressions
 
-`checkov -d infra` (Checkov 3.3.28, `main` `855e8d6`) gives **137 passed, 0 failed, 20 skipped**. The 20 skips cover 13 checks. Each is suppressed inline with the reason below, quoted from `infra/modules/*/main.tf`.
+Checkov is a **blocking** job in both CI systems: GitLab CI and GitHub Actions run `checkov -d infra` (3.3.28) with no `allow_failure` or `continue-on-error`, so a new finding fails the pipeline and, because `main` is protected, blocks the merge (QMC-119, MR !37; D42). Re-run on `main` `d9b8531`: **137 passed, 0 failed, 20 skipped**. The 20 skips cover 13 checks. Each is suppressed inline with the reason below, quoted from `infra/modules/*/main.tf`.
 
 | Check | Resources | Reason |
 | --- | --- | --- |
