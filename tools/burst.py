@@ -10,6 +10,7 @@ Evidence, three ways: the RL#qrypt limiter items (slots per window, exact), the 
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import json
 import math
 import sys
@@ -18,6 +19,8 @@ from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
 from _common import ENV, Checks, aws, call, log_events, log_group, outputs, poll
+
+from qmc_core.codec import iso_ms
 
 JOB = {"S0": 100.0, "K": 100.0, "r": 0.05, "sigma": 0.2, "T": 1.0, "paths": 1000, "shards": 1}
 
@@ -39,12 +42,120 @@ def sample_check(t0: float, t1: float):
     return (n_metric, n_logs) if n_metric >= n_logs else None
 
 
+def qrypt_429_checks(check, lines, slots, t0, t1, http_503=None) -> None:
+    """HANDOFF 1.12 §11 (James's decision; R24): Qrypt may 429 a call that crosses a window
+    boundary, at most once per boundary, and each such submit must fail closed as 503
+    QRYPT_RATE_LIMITED with no job, JOBLIST or entropy item written."""
+    statuses = Counter(json.loads(e["message"]).get("http_status") for e in lines)
+    n429 = statuses.get(429, 0)
+    used = sum(1 for n in slots.values() if n)
+    check(
+        "Qrypt 429s ≤ limiter windows used − 1",
+        n429 <= max(used - 1, 0),
+        f"{n429} Qrypt 429 in {used} windows; statuses {dict(statuses)}",
+    )
+    failed = [
+        json.loads(e["message"])
+        for e in log_events(
+            log_group("api"),
+            '{ $.event = "seeding_failed" && $.cause = "QRYPT_RATE_LIMITED" }',
+            t0 - 1,
+            t1 + 30,
+        )
+    ]
+    ids = {f["job_id"] for f in failed}
+    detail = f"{len(ids)} seeding_failed QRYPT_RATE_LIMITED" + (
+        f", {http_503} HTTP 503" if http_503 is not None else ""
+    )
+    check(
+        "every Qrypt 429 → one 503 QRYPT_RATE_LIMITED submit",
+        len(ids) == n429 and http_503 in (None, n429),
+        detail,
+    )
+    table = outputs()["table_name"]
+    ddb = aws("dynamodb")
+    jobs = [
+        i
+        for i in ids
+        if "Item"
+        in ddb.get_item(
+            TableName=table, ConsistentRead=True, Key={"pk": {"S": f"JOB#{i}"}, "sk": {"S": "META"}}
+        )
+    ]
+    listed = {
+        x["job_id"]["S"]
+        for page in ddb.get_paginator("query").paginate(
+            TableName=table,
+            ConsistentRead=True,
+            ProjectionExpression="job_id",
+            KeyConditionExpression="pk = :p AND sk BETWEEN :a AND :b",
+            ExpressionAttributeValues={
+                ":p": {"S": "JOBLIST"},
+                ":a": {"S": iso_ms(t0 - 5)},
+                ":b": {"S": iso_ms(t1 + 60)},
+            },
+        )
+        for x in page["Items"]
+    }
+    entropy = [
+        x
+        for page in ddb.get_paginator("scan").paginate(
+            TableName=table,
+            ProjectionExpression="pk, job_id",
+            FilterExpression="begins_with(pk, :e)",
+            ExpressionAttributeValues={":e": {"S": "ENTROPY#"}},
+        )
+        for x in page["Items"]
+        if x.get("job_id", {}).get("S") in ids
+    ]
+    check(
+        "nothing written for those submits (job, JOBLIST, entropy)",
+        not jobs and not (ids & listed) and not entropy,
+        f"job items {len(jobs)}, JOBLIST {len(ids & listed)}, entropy {len(entropy)}",
+    )
+
+
+def recheck(start: str, end: str, w_s: int) -> int:
+    """Server-side checks on a past burst (no submits): ``--recheck 13:13:37Z 13:13:41Z``."""
+    day = time.strftime("%Y-%m-%d", time.gmtime())
+    t0, t1 = (
+        dt.datetime.fromisoformat(f"{day}T{x.rstrip('Z')}+00:00").timestamp() for x in (start, end)
+    )
+    check = Checks()
+    table = outputs()["table_name"]
+    slots = {}
+    for w in range(int(t0 // w_s) * w_s, int(t1 // w_s) * w_s + w_s, w_s):
+        item = (
+            aws("dynamodb")
+            .get_item(
+                TableName=table,
+                ConsistentRead=True,
+                Key={"pk": {"S": "RL#qrypt"}, "sk": {"S": str(w)}},
+            )
+            .get("Item")
+        )
+        slots[w] = int(item["n"]["N"]) if item else 0
+    lines = log_events(log_group("api"), '{ $.event = "qrypt_call" }', t0 - 1, t1 + 30)
+    used = {w: n for w, n in slots.items() if n}
+    print(f"recheck {start}–{end}: slots {used}, {len(lines)} qrypt_call lines")
+    qrypt_429_checks(check, lines, slots, t0, t1)
+    return check.summary()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=40)
     ap.add_argument("--cap", type=int, default=1, help="QRYPT_MAX_PER_WINDOW (contract change 005)")
     ap.add_argument("--window-s", type=int, default=1, help="QRYPT_WINDOW_S (contract change 005)")
+    ap.add_argument(
+        "--recheck",
+        nargs=2,
+        metavar=("START", "END"),
+        help="re-run the server-side checks on a past burst today (UTC HH:MM:SSZ); no submits",
+    )
     args = ap.parse_args()
+    if args.recheck:
+        return recheck(*args.recheck, args.window_s)
     assert 1 <= args.n <= 40, "burst is capped at 40 submits (Qrypt quota)"
     check = Checks()
 
@@ -56,8 +167,14 @@ def main() -> int:
     errors = Counter(b.get("error", {}).get("code") for s, _, b in results if s != 202)
     print(f"{args.n} submits in {t1 - t0:.2f} s: {dict(codes)} {dict(errors)}")
     check(
-        "only 202 or 429 ENTROPY_RATE_LIMITED",
-        set(codes) <= {202, 429} and set(errors) <= {"ENTROPY_RATE_LIMITED"},
+        "only 202, 429 ENTROPY_RATE_LIMITED or 503 QRYPT_RATE_LIMITED",
+        set(codes) <= {202, 429, 503}
+        and set(errors) <= {"ENTROPY_RATE_LIMITED", "QRYPT_RATE_LIMITED"}
+        and all(
+            b["error"]["code"] == ("ENTROPY_RATE_LIMITED" if s == 429 else "QRYPT_RATE_LIMITED")
+            for s, _, b in results
+            if s != 202
+        ),
         dict(errors),
     )
     retry_after = Counter(
@@ -104,7 +221,6 @@ def main() -> int:
     lines = log_events(log_group("api"), pattern, t0 - 1, t1 + 30)
     ts = sorted(e["timestamp"] / 1000 for e in lines)
     per_window = Counter(int(t // w_s) * w_s for t in ts)
-    statuses = Counter(json.loads(e["message"]).get("http_status") for e in lines)
     rolling = max(sum(1 for u in ts if t <= u < t + 10) for t in ts)
     check(
         "qrypt_call lines ≥ submits that reached Qrypt",
@@ -112,13 +228,13 @@ def main() -> int:
         f"{len(ts)} calls, {reached} submits reached Qrypt ({codes[202]} accepted)",
     )
     # Guards: the slots read must cover the calls seen (a changed RL key format would otherwise
-    # make the slot check pass on zeros), and Qrypt itself must never have said 429.
+    # make the slot check pass on zeros).
     check(
         "limiter slots ≥ Qrypt calls",
         sum(slots.values()) >= len(ts),
         f"{sum(slots.values())} vs {len(ts)}",
     )
-    check("no Qrypt 429", not statuses.get(429), dict(statuses))
+    qrypt_429_checks(check, lines, slots, t0, t1, http_503=errors["QRYPT_RATE_LIMITED"])
     # Fixed windows: a rolling 10 s interval can touch ceil(10 / w) + 1 windows at its edges.
     bound = args.cap * (math.ceil(10 / w_s) + 1)
     check(f"≤ {bound} Qrypt calls in any rolling 10 s", rolling <= bound, f"max {rolling}")

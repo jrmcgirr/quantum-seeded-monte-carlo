@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
-| Burst vs 30 req/10 s | `make burst` | 1 s window cap 1 (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), **1 × 503: Qrypt 429 on a call ~1.2 s after the previous one**, max 2 Qrypt calls per 10 s (finding below). Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
+| Burst vs 30 req/10 s | `make burst` | **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -240,6 +240,23 @@ Recomputed afterwards on the full data (WS4, from the same log group and metric,
 - Fixed 1 s windows still allow two calls about 1 s apart, and in the worst case milliseconds apart across a boundary. Qrypt rejected the second call with 429.
 - Request start times, derived as log time minus latency: 39.508 s and 40.699 s, a 1.19 s gap. From the first response (39.792 s) to the second request: 0.91 s. So Qrypt's limit is not "one per aligned second". It behaves like a sliding window or a minimum spacing of more than 1 s.
 - Fail-closed held: 503 naming the cause, nothing written. The assignment's limit (≤ 30 per 10 s) is met (max 2).
+
+### Verdict under HANDOFF 1.12 (James's decision)
+
+James accepted this as known behaviour (HANDOFF 1.12 §11 and risk R24). A burst may see **at most one Qrypt 429 per limiter-window boundary crossed**, and each must fail closed as 503 `QRYPT_RATE_LIMITED` with nothing written. The fallback, if it recurs in normal use, is a 2 s minimum gap (contract change 006). This is a decision recorded in HANDOFF, not a loosened assertion: `tools/burst.py` replaces "no Qrypt 429" with exactly these checks. Re-checked on this run's server-side data, with no new submits:
+
+```
+$ AWS_PROFILE=qmc uv run python tools/burst.py --recheck 13:13:37Z 13:13:41Z
+recheck 13:13:37Z–13:13:41Z: slots {1791897219: 1, 1791897220: 1}, 2 qrypt_call lines
+PASS  Qrypt 429s ≤ limiter windows used − 1  1 Qrypt 429 in 2 windows; statuses {200: 1, 429: 1}
+PASS  every Qrypt 429 → one 503 QRYPT_RATE_LIMITED submit  1 seeding_failed QRYPT_RATE_LIMITED
+PASS  nothing written for those submits (job, JOBLIST, entropy)  job items 0, JOBLIST 0, entropy 0
+3/3 passed
+```
+
+Negative control: the same checks on the cap-10 run (12:55:43Z, 10 s windows) correctly **FAIL** with `9 Qrypt 429 in 1 windows`. The new criterion still catches a limiter that lets bursts through.
+
+**Verdict for the 13:13:37Z run: PASS** (HANDOFF 1.12). The tool-bug note above stays.
 
 ## Burst at cap 10 (contract change 004), build_sha f3873f8, 2026-10-13 12:55:43Z
 
