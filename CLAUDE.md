@@ -73,7 +73,7 @@ Every rule has exactly one implementation, in `qmc_core`. Handlers are thin. Nev
 - **Qrypt budget:** every live submit spends 1 KiB of a finite, unpublished monthly quota. Never loop live submits without a cap. Poll job status at 2 s, not faster (10 RCU).
 - **Stay in your lane.** Edit only the paths your workstream owns.
 - **Tests are part of done.** A ticket is done when its tests pass from a clean checkout.
-- **Git:** one branch per workstream (`ws1-infra`, …), small commits prefixed `WSn:` with the ticket id, merge request to `main` with `Closes #<issue>`; James merges at each gate.
+- **Git:** one branch per workstream (`ws1-infra`, …), small commits prefixed `WSn:` with the ticket id, merge request **into `staging`** (not `main`) with `Closes #<issue>` and source-branch deletion off; rebase on `staging`. CI runs only on merge requests. The integrator promotes `staging` → `main` (one MR) and applies from `main`.
 - **Verify, don't assert.** Every claim in a report or doc cites a test, a command output, a log line or a screenshot.
 - **AI usage log:** at the end of each session append to `docs/ai-log/WSn.md`: time, workstream, tool and model, what was asked, what was produced, what a human checked or changed.
 - **Ask, do not guess,** when the handoff is silent on something that affects another workstream.

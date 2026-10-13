@@ -1,12 +1,12 @@
 # CI (QMC-106). Mirrored job for job in .github/workflows/ci.yml (D19). No deploys from CI.
 stages: [lint, test, infra, security]
 
-# One pipeline per push: branch pipelines only (merge-request pipelines would duplicate them).
+# Pipelines run only for merge requests (workstream -> staging, and staging -> main), never for
+# plain pushes (James, 2026-10-13). Manual runs from the UI still work.
 workflow:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-      when: never
-    - when: always
+    - if: $CI_PIPELINE_SOURCE == "web"
 
 variables:
   UV_CACHE_DIR: "$CI_PROJECT_DIR/.uv-cache"
