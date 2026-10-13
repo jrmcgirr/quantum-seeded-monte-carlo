@@ -1,6 +1,6 @@
 # Quantum-Seeded Monte Carlo — Handoff
 
-Version 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
+Version 1.6, 2026-10-13 (G1 live: `kms:Decrypt` not needed). 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
 
 Where this file disagrees with `docs/ASSIGNMENT.md`, **this file wins**; section 3 records how each conflict was resolved. The product view (who, why, success metrics) is in `docs/PRD.md`; the plan, gates and tickets are in `docs/ROADMAP.md`; the research behind every decision is in `docs/PRIMER.md`; the reasoning for each decision is in `docs/DECISIONS.md`.
 
@@ -480,7 +480,7 @@ infra/
 | | `sqs:SendMessage` (covers `SendMessageBatch`) | the main queue ARN |
 | | `ssm:GetParameter` | the token parameter ARN |
 | | `logs:CreateLogStream`, `logs:PutLogEvents` | `<api log group ARN>:*` |
-| | `kms:Decrypt` on the `aws/ssm` key, condition `kms:EncryptionContext:PARAMETER_ARN` = the parameter ARN | **only if** G1 shows `GetParameter` fails without it (the AWS-managed key's policy normally authorizes account principals via SSM); record the outcome in DECISIONS |
+| | `kms:Decrypt` on the `aws/ssm` key, condition `kms:EncryptionContext:PARAMETER_ARN` = the parameter ARN | **Not needed** (G1, 2026-10-13: the first live submit read the SecureString with `WithDecryption=True` without this grant; the `aws/ssm` key policy authorizes account principals via SSM). Not granted |
 | Worker role | `sqs:ReceiveMessage`, `DeleteMessage`, `GetQueueAttributes`, `ChangeMessageVisibility` | the main queue ARN |
 | | `dynamodb:PutItem`, `UpdateItem`, `Query` | the table ARN |
 | | `logs:CreateLogStream`, `logs:PutLogEvents` | `<worker log group ARN>:*` |
