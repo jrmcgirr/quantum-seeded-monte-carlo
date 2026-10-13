@@ -39,3 +39,13 @@
   - **`kms:Decrypt`: not needed.** WS2's live submit (job `5358ec35af8a450d9eba939da9f610d9`, 202, Qrypt HTTP 200) decrypted the token with `ssm:GetParameter` alone. The conditional KMS statement stays out.
   - G1 run on this stack (reported by WS2): COMPLETE within 3 SE (z 1.735); replay bit-identical (10 shards, `fingerprint_match` true); worker `exp_target` X86_V3 with `dispatch_enforced` true.
 - **Human checks:** James approved the push, MR !3, the re-apply, MR !4 and the test alarm; he created the token parameter himself.
+
+## 2026-10-13, about 6:35–6:50 AM CT, WS1 Infrastructure (QMC-118)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Produced:**
+  - MR !7: the API function ARN is built from its name, so a `build_sha` bump plans exactly 2 changes. Confirmed by WS0's apply from main 2660767: 2 changed, then no changes.
+  - QMC-118: dashboard `qmc-<env>` in the observability module, with 8 metric widgets (jobs, paths, entropy and seeding failures, Qrypt latency p50/p95, worker duration, worker errors/throttles/shard failures, queue depth and age, DLQ depth) and one alarm-status widget. No Logs Insights widgets, which bill per view.
+  - Checks: `validate` and tflint clean; checkov 137 passed, 0 failed, 20 skipped. A `-lock=false` plan (the integrator was applying) showed the dashboard as 1 to add, plus the 2 sha-bump Lambda updates.
+  - Pointed out to WS0 and WS4 that GitLab's golden job runs emulated on James's Apple Silicon runner. WS0 had already recorded it (HANDOFF 1.8, D19); the GitHub Actions x86 runners are the native check.
+- **Human checks:** James approved pushing MR !7 and starting QMC-118. Since G1 the integrator applies from main, so this session no longer applies.
