@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
-| Burst vs 30 req/10 s | `make burst` | PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
+| Burst vs 30 req/10 s | `make burst` | cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -207,6 +207,48 @@ distinct worker execution environments (log streams): 17
 
 Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
 
+## Burst at cap 10 (contract change 004), build_sha f3873f8, 2026-10-13 12:55:43Z
+
+`AWS_PROFILE=qmc make burst` (cap 10 by default). Qrypt: 1 KiB, since only one block was delivered.
+
+```
+40 submits in 3.55 s: {429: 30, 503: 9, 202: 1} {'ENTROPY_RATE_LIMITED': 30, 'QRYPT_RATE_LIMITED': 9}
+FAIL  only 202 or 429 ENTROPY_RATE_LIMITED  {'ENTROPY_RATE_LIMITED': 30, 'QRYPT_RATE_LIMITED': 9}
+PASS  every 429 has Retry-After  
+PASS  limiter: ≤ 10 slots per 10 s window  {1791896140: 10}
+PASS  qrypt_call lines ≥ accepted jobs  10 calls, 1 jobs
+PASS  ≤ 20 Qrypt calls in any rolling 10 s  max 10
+PASS  ≤ 30 Qrypt calls in any rolling 10 s (assignment)  max 10
+qrypt_call per fixed window (log timestamps): {1791896140: 10}
+PASS  QryptLatencyMs SampleCount = qrypt_call lines (same minutes)  10 vs 10 (after 0 s)
+```
+
+| check | result | detail |
+| --- | --- | --- |
+| only 202 or 429 ENTROPY_RATE_LIMITED | **FAIL** | 30 × ENTROPY_RATE_LIMITED, **9 × QRYPT_RATE_LIMITED (503)** |
+| every 429 has Retry-After | PASS | |
+| limiter: ≤ 10 slots per 10 s window | PASS | `RL#qrypt/1791896140` n = 10 |
+| ≤ 20 Qrypt calls in any rolling 10 s | PASS | max 10 |
+| ≤ 30 Qrypt calls in any rolling 10 s (assignment) | PASS | max 10 |
+| QryptLatencyMs SampleCount = qrypt_call lines | PASS | 10 vs 10 |
+
+`qrypt_call` lines (`FilterLogEvents` on `/aws/lambda/qmc-dev-api`):
+
+```
+12:55:45.438  200  attempt 1  321 ms  ok
+12:55:46.479  429  attempt 1  126 ms  QRYPT_RATE_LIMITED
+12:55:46.483  429  attempt 1  157 ms  QRYPT_RATE_LIMITED
+… 7 more 429s between 12:55:46.497 and 12:55:46.587, all attempt 1
+```
+
+**Finding (reported to WS0):**
+- Our limiter did exactly what HANDOFF D10 and 004 specify: 10 slots, then 30 clean 429s with Retry-After. No Qrypt retry happened, because a retry needs a second slot and the window was full (§4.1).
+- Qrypt itself now enforces its trial key's ~1 call/s. The 9 calls about 1 s after the first all got Qrypt 429. At 12:01Z, by contrast, 8 calls in one second all got 200.
+- A fixed 10-per-10 s window lets 10 near-simultaneous calls through, so under a burst most of them fail at Qrypt and become 503 `QRYPT_RATE_LIMITED` with `SeedingFailures`.
+- Fail-closed (I1) held: each of those 9 submits got 503 naming the cause and wrote no job.
+- The assignment's requirement (never above 30 requests per 10 s to Qrypt) is met (max 10). What fails is our expectation that the API absorbs a burst with only clean 429s.
+- The fix is a limiter-shape decision for WS0/WS2, for example a 1 s window with cap 1, which also gives ≤ 10 per 10 s. The assertion has not been loosened.
+
 ## Burst (QMC-143), build_sha d0af0b1, 2026-10-13 12:01:50Z
 
 `AWS_PROFILE=qmc make burst`: 40 concurrent `POST /jobs` (1,000 paths, 1 shard each).
@@ -316,4 +358,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | make force-failure --duplicate (11:41 UTC) | 2 |
 | fail-closed decoy drill (11:51 and 12:08 UTC, Qrypt 403) | 0 |
 | burst: aborted attempt (12:01:11) + run (12:01:50) | 5 + 15 |
-| **Total** | **23** |
+| burst at cap 10 (12:55 UTC; 1 × 200, 9 × Qrypt 429) | 1 |
+| **Total** | **24** |
