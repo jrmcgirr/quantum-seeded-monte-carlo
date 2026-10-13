@@ -11,7 +11,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 3: progress then COMPLETE | `make e2e` | PASS (c768aea): `RUNNING:8/10 → COMPLETE:10/10` |
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
 | Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); replay ×20 **20/20 bit-identical** (855e8d6), 2 CPU model strings, 17 execution environments |
-| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
+| Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; **alarm email received** ([screenshot](images/dlq-alarm-email.png)) |
 | Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run 12:08 PASS (855e8d6): 503 QRYPT_FORBIDDEN, alarm OK→ALARM 12:09:32Z, SNS OK |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
@@ -164,7 +164,13 @@ INFO  local recompute (arm64) matches Lambda: 0x1.4dae09143f9adp+3 vs 0x1.4dae09
 11:48:08.079Z Action       Successfully executed action arn:aws:sns:us-east-2:…:qmc-dev-alerts
 ```
 
-Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Email screenshot:** pending from James, for WS5.
+Timeline from submit: PARTIAL with `[3]` at +13 s (forced failure, 3 receives at 5 s visibility, R14); DLQ depth 1 at +23 s; alarm ALARM at +237 s (SQS metric lag, R23). The DLQ was purged at the end, so an OK email follows. **Alarm email (screenshot `docs/images/dlq-alarm-email.png`, James's inbox, checked by WS4 against the alarm history above):**
+- Subject `ALARM: "qmc-dev-dlq-depth" in US East (Ohio)`, from AWS Notifications `<no-reply@sns.amazonaws.com>`, received 6:48 AM CT (11:48 UTC).
+- "State Change: OK -> ALARM", "Threshold Crossed: 1 datapoint [1.0 (13/10/26 11:46:00)] was greater than the threshold (0.0)", "Timestamp: Tuesday 13 October, 2026 11:48:08 UTC".
+- Metric `AWS/SQS` `ApproximateNumberOfMessagesVisible`, `QueueName = qmc-dev-shards-dlq`, period 60 s, Maximum, notBreaching. Actions on `arn:aws:sns:us-east-2:…:qmc-dev-alerts`.
+- The same thread shows two earlier deliveries: 6:24 AM CT (11:24Z, reason "WS1 QMC…": WS1's `set-alarm-state` test, QMC-115) and 6:30 AM CT (11:30Z, a threshold crossing from WS3's G1 forced failure).
+
+![DLQ alarm email](images/dlq-alarm-email.png)
 
 ## Replay ×20 across Lambda hosts (QMC-146), build_sha 855e8d6, 2026-10-13
 
