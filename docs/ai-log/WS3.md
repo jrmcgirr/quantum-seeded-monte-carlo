@@ -14,3 +14,25 @@
   - The first run had 3 failures, all bugs in my tests (a recursive hook, and test reads inside `iam_guard`).
   - Mutation check: a duplicate that returns early fails 2 tests, and `mark_failed` on every attempt fails 2 tests.
 - **Human check:** pending. James to review the MR against the checklist in `docs/prompts/WS3-worker.md`. Deployed checks (1M-path COMPLETE, forced failure → PARTIAL + DLQ, REPORT durations, `exp_target`/`cpu_model`) wait for the G1 deploy.
+
+## 2026-10-13, late morning (deployed checks on build c768aea, us-east-2)
+
+- **Workstream:** WS3 Worker. **Tool and model:** Claude Code, Claude Opus 5.5 (`claude-opus-5-5`).
+- **Asked:** run the WS3 deployed checks once WS1 had applied and the token parameter existed. Two live submits, 2 KiB of Qrypt.
+- **Produced and verified** (`clients/qmc.py` with the `qmc` profile; worker logs via `FilterLogEvents`):
+  - **1M-path reference job** `ce48c4378f45410297ab3484776b3a9d`: COMPLETE.
+    - `estimate_hex 0x1.4dff91f39582cp+3` (10.437447524786045), SE 0.014714, z −0.893, `within_3se: true`.
+    - Qrypt latency 118 ms.
+    - Exactly one `shard_written` per shard (10, all attempt 1) and one `job_finalized`.
+  - **Forced failure** `b33493db9834470986ffc5264528fdca` (`--fail-shards 3`, fault injection on): PARTIAL in about 11 s.
+    - `failed_shards [3]`, progress 9/10 done and 1 failed, `partial_result.n = 900000`.
+    - Worker trail: `shard_error` on attempts 1, 2 and 3 at 11:27:03, :08 and :13 (5 s visibility), then `shard_marked_failed`, `ShardFailures`, `job_finalized PARTIAL [3]`, `JobsPartial`.
+    - DLQ `ApproximateNumberOfMessages = 1` after about 90 s (0 at about 35 s: the count lags). The main queue is empty.
+  - **Runtime:** `exp_target X86_V3`, `dispatch_enforced true`, `avx512f false`, `fma true`, NumPy 2.5.4, Python 3.13.15, glibc 2.34.
+    - `cpu_model` values seen: `Intel(R) Xeon(R) Processor @ 2.50GHz`, and `Intel(R) Xeon(R) Processor` on one sandbox.
+  - **REPORT durations:**
+    - Cold (5 sandboxes): Init 605–837 ms, Duration 373–397 ms.
+    - Warm: Duration 17–49 ms (typically about 20 ms).
+    - Max memory 119–121 MB of 1024.
+    - Simulation of 100k paths: 3–8 ms warm.
+- **Human check:** pending (James).
