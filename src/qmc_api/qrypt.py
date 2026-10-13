@@ -1,7 +1,7 @@
 """Qrypt entropy sources (HANDOFF §7.5 step 4): the HTTP client and the fake used by every test.
 
 ``EntropySource.fetch`` owns the policy shared by both: one overall deadline, at most one
-jittered retry (429/5xx/network only, within 1 s, after a fresh limiter slot), and a
+jittered retry (5xx/network only, never 429, within 1 s, after a fresh limiter slot), and a
 ``qrypt_call`` log line plus ``QryptLatencyMs`` for every attempt. Implementations supply only
 ``request`` (one HTTP exchange). Response parsing is ``qmc_core.seeds.parse_qrypt_response``.
 
@@ -25,9 +25,9 @@ from qmc_core import codec, emf, logjson
 from qmc_core.errors import EntropyError, ErrorCode
 from qmc_core.seeds import MasterSeed, parse_qrypt_response
 
+# Never QRYPT_RATE_LIMITED: retrying a Qrypt 429 only earns another (contract change 006).
 RETRYABLE = frozenset(
     {
-        ErrorCode.QRYPT_RATE_LIMITED,
         ErrorCode.QRYPT_SERVER_ERROR,
         ErrorCode.QRYPT_ENTROPY_UNAVAILABLE,
         ErrorCode.QRYPT_TIMEOUT,

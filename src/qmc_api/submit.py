@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import math
 import time
 import uuid
 
@@ -23,23 +22,17 @@ SQS_RETRIES = 2
 LAMBDA_MARGIN_MS = 500
 
 
-def _take_slot(table, now: float) -> bool:
-    w = aws.env_int("QRYPT_WINDOW_S")
-    kwargs = ddb.limiter_take(
-        ddb.limiter_window(now, w), aws.env_int("QRYPT_MAX_PER_WINDOW"), now, size_s=w
-    )
+def _take_slot(table, now: float) -> int | None:
+    """Claim the next Qrypt call (QRYPT_MIN_GAP_MS after the last one). None when claimed,
+    else the Retry-After seconds until the gap ends."""
+    gap_ms = aws.env_int("QRYPT_MIN_GAP_MS")
     try:
-        table.update_item(**kwargs)
+        table.update_item(**ddb.limiter_gap_take(now, gap_ms))
     except Exception as exc:
         if ddb.is_conditional_failure(exc):
-            return False
+            return ddb.limiter_gap_retry_after(ddb.item_from_error(exc), now, gap_ms)
         raise
-    return True
-
-
-def _retry_after(now: float) -> int:
-    w = aws.env_int("QRYPT_WINDOW_S")
-    return max(1, math.ceil(ddb.limiter_window(now, w) + w - now))
+    return None
 
 
 def submit(event, context) -> tuple[int, dict]:
@@ -53,8 +46,9 @@ def submit(event, context) -> tuple[int, dict]:
     table = aws.table()
 
     now = time.time()
-    if not _take_slot(table, now):
-        raise QmcError(ErrorCode.ENTROPY_RATE_LIMITED, retry_after=_retry_after(now))
+    wait_s = _take_slot(table, now)
+    if wait_s is not None:
+        raise QmcError(ErrorCode.ENTROPY_RATE_LIMITED, retry_after=wait_s)
 
     # Fail closed: until the entropy claim succeeds, nothing but the limiter slot is written.
     try:
@@ -64,7 +58,7 @@ def submit(event, context) -> tuple[int, dict]:
             context.get_remaining_time_in_millis() - LAMBDA_MARGIN_MS,
         )
         entropy = qrypt.get_entropy_source().fetch(
-            token, budget, lambda: _take_slot(table, time.time())
+            token, budget, lambda: _take_slot(table, time.time()) is None
         )
         emf.emit("EntropyKiB", 1, job_id=job_id)
         seed = derive_master_seed(entropy.block, job_id)

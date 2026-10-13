@@ -92,7 +92,7 @@ def test_200_returns_block_and_sends_headers(stub):
         (400, ErrorCode.QRYPT_BAD_REQUEST, 1),
         (401, ErrorCode.QRYPT_AUTH_FAILED, 1),
         (403, ErrorCode.QRYPT_FORBIDDEN, 1),
-        (429, ErrorCode.QRYPT_RATE_LIMITED, 2),
+        (429, ErrorCode.QRYPT_RATE_LIMITED, 1),  # never retried (change 006)
         (500, ErrorCode.QRYPT_SERVER_ERROR, 2),
         (503, ErrorCode.QRYPT_ENTROPY_UNAVAILABLE, 2),
     ],
@@ -124,8 +124,8 @@ def test_one_retry_then_success_takes_a_second_slot(stub):
 
 
 def test_refused_second_slot_returns_original_qrypt_error(stub):
-    stub.actions = [(429, "{}")]
-    assert code_of(QryptHttpSource(stub.url), slots=False) is ErrorCode.QRYPT_RATE_LIMITED
+    stub.actions = [(500, "{}")]
+    assert code_of(QryptHttpSource(stub.url), slots=False) is ErrorCode.QRYPT_SERVER_ERROR
     assert len(stub.requests) == 1
 
 

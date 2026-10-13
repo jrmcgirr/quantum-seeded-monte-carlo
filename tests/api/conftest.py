@@ -43,9 +43,9 @@ def api(ddb_table, queues, qrypt_param, iam_guard, monkeypatch):
 
     from qmc_api import aws, handler, qrypt, secret
 
-    # Tests not about the limiter must not depend on the clock (the default is 1 call per 1 s).
-    # Limiter tests delete this to run on the HANDOFF §8.4 defaults.
-    monkeypatch.setenv("QRYPT_MAX_PER_WINDOW", "1000")
+    # Tests not about the limiter must not depend on the clock (the default gap is 2 s).
+    # Limiter tests delete this to run on the HANDOFF §8.4 default.
+    monkeypatch.setenv("QRYPT_MIN_GAP_MS", "0")
     aws.reset()
     secret.clear()
     fake = qrypt.FakeEntropySource()
