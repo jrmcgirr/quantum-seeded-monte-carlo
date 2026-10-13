@@ -155,7 +155,9 @@ Drill: `AWS_PROFILE=qmc uv run python tools/sfn_drill.py`. Qrypt: 2 KiB.
 | forced `fail_shards: [3]`: job PARTIAL | PASS | `c8f8a1f5952f4110b00fd17d0f88c13c` |
 | forced: execution FAILED, error `JobNotComplete` | PASS | 20 s |
 
-The DLQ was purged after the forced job. Switch-off: see below.
+The DLQ was purged after the forced job.
+
+Switch-off: WS0 re-applied main b0ee345 without the variable at 19:30:23Z (3 destroyed, 2 changed); plan afterwards showed no changes. Verified read-only: `ListStateMachines` is empty and the API Lambda has no `SFN_ARN` (last modified 19:29:50Z). The watcher stays off by default.
 
 ## Coverage per package: PROVISIONAL (main 2c547c2, 2026-10-13 ~16:05Z)
 

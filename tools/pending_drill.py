@@ -1,7 +1,9 @@
 """QMC-128 deployed drill (contract change 008): N (10) concurrent opt-in submits with
 ``on_entropy_failure: "queue"``. The first takes the Qrypt gap slot; the rest hit our limiter
 (retryable) and must come back 202 PENDING_ENTROPY, then the async seeder must seed each from Qrypt
-(never local) and every job must reach COMPLETE. Also checks: Qrypt calls ≥ 2 s apart and no
+(never local) and every job must reach COMPLETE: a refusal by our own gap waits for the slot
+(+ 0–2 s jitter, bounded by pending_until) without spending an attempt, so entropy_attempts stays
+≤ PENDING_MAX_ATTEMPTS. Also checks: Qrypt calls ≥ 2 s apart and no
 Qrypt 429 (burst.qrypt_checks), no seeder errors in the API log, one replay bit-identical.
 Polls one job at a time at 2 s. Qrypt: ≤ N KiB, one per Qrypt call (the replay reuses the stored seed).
 """
@@ -15,7 +17,7 @@ import time
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor
 
-from _common import Checks, call, log_events, log_group, wait
+from _common import Checks, aws, call, log_events, log_group, outputs, wait
 from burst import JOB, qrypt_checks
 
 
@@ -23,6 +25,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=10, help="≤ MAX_PENDING_ENTROPY (10)")
     ap.add_argument("--gap-ms", type=int, default=2000)
+    ap.add_argument("--max-attempts", type=int, default=4, help="PENDING_MAX_ATTEMPTS")
     args = ap.parse_args()
     assert 1 <= args.n <= 10, "capped at 10 submits (MAX_PENDING_ENTROPY, Qrypt quota)"
     check = Checks()
@@ -52,6 +55,24 @@ def main() -> int:
     t1 = time.time()
     final = Counter(v["status"] for v in views.values())
     check(f"all {len(ids)} jobs COMPLETE", final == Counter({"COMPLETE": args.n}), dict(final))
+    # Only real Qrypt/network failures spend an attempt; waits for our own 2 s slot are free
+    # (James, after the first drill). No job here should have spent more than the cap.
+    ddb, table = aws("dynamodb"), outputs()["table_name"]
+    attempts = {
+        j: int(
+            ddb.get_item(
+                TableName=table,
+                ConsistentRead=True,
+                Key={"pk": {"S": f"JOB#{j}"}, "sk": {"S": "META"}},
+            )["Item"].get("entropy_attempts", {"N": "0"})["N"]
+        )
+        for j in ids
+    }
+    check(
+        f"entropy_attempts ≤ PENDING_MAX_ATTEMPTS ({args.max_attempts})",
+        max(attempts.values(), default=0) <= args.max_attempts,
+        dict(Counter(attempts.values())),
+    )
     for v in views.values():
         if v["status"] != "COMPLETE":
             print(
