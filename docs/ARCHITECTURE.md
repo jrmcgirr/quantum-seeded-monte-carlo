@@ -19,6 +19,8 @@ flowchart LR
         APIF["Lambda qmc-env-api (python3.13, x86_64, 512 MB)"]
         APIR["IAM role + policy: api"]
         APIL["Log group /aws/lambda/qmc-env-api (14 d)"]
+        EIC["Event-invoke config: 0 retries, max age 300 s (008)"]
+        SFN["Optional: Step Functions qmc-env-watcher + role (off by default, 007)"]
     end
 
     subgraph ext["Outside Terraform"]
@@ -59,6 +61,10 @@ flowchart LR
     APIF -- "limiter, entropy claim, job, joblist" --> DDB
     APIF -- "SendMessageBatch, 1 per shard" --> SQ
     APIF -- "stdout JSON + EMF" --> APIL
+    APIF -- "async self-invoke: PENDING_ENTROPY seeder (opt-in, ≤ 4 attempts)" --> APIF
+    EIC -.- APIF
+    APIF -. "StartExecution (only if enabled)" .-> SFN
+    SFN -. "GetItem every 10 s until terminal" .-> DDB
     QP -.- SQ
     QP -.- DLQ
     SQ --> ESM --> WF
@@ -73,7 +79,10 @@ flowchart LR
     ALM --> SNS --> SUB
     BUD --> SNS
     ALM -.- DASH
+    style SFN stroke-dasharray: 5 5
 ```
+
+Dashed outline: the Step Functions watcher and its role exist only with `enable_step_functions = true` (contract change 007). In `dev` it is off, and `ListStateMachines` returns none (2026-10-13, after the apply of `main` `581563d`).
 
 *TBD (QMC-152): reconcile with `terraform state list` (data sources, `aws_iam_policy_document`s, the redrive policy, the topic policy, the Function URL permission) and mark the dashboard as cut if QMC-118 is cut.*
 
@@ -103,6 +112,43 @@ sequenceDiagram
         A-->>C: 202 job_id, master_seed_hex
     end
 ```
+
+## Opt-in PENDING_ENTROPY (contract change 008)
+
+A submit with `"on_entropy_failure": "queue"` that hits a **retryable** entropy failure (our 429 `ENTROPY_RATE_LIMITED`, a Qrypt 429 or 5xx, a timeout or a network error) is parked instead of rejected, if fewer than `MAX_PENDING_ENTROPY` (10) jobs are pending. Token, quota and bad-response failures still reject at once, writing nothing.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant C as Client
+    participant A as API Lambda (request)
+    participant S as API Lambda (seeder, async)
+    participant D as DynamoDB
+    participant Q as Qrypt
+    participant M as SQS shards
+    C->>A: POST /jobs, on_entropy_failure "queue"
+    A->>Q: entropy (retryable failure)
+    A->>D: job put PENDING_ENTROPY (params only, no seed), joblist put
+    A->>S: Invoke, InvocationType Event, attempt 1
+    A-->>C: 202 job_id, status PENDING_ENTROPY
+    loop attempt 1..4 (PENDING_MAX_ATTEMPTS), waits 2, 4, 6, 6 s
+        S->>D: Qrypt gap slot
+        S->>Q: GET 1 KiB
+        alt block received
+            S->>D: entropy claim, then PENDING_ENTROPY → QUEUED with seed (conditional)
+            S->>M: one message per shard
+        else retryable failure
+            S->>D: entropy_attempts + 1 (conditional on PENDING_ENTROPY)
+            S->>S: Invoke, attempt + 1
+        else non-retryable, or last attempt
+            S->>D: PENDING_ENTROPY → FAILED, naming the cause
+        end
+    end
+    C->>A: GET /jobs/{id} past pending_until (120 s)
+    A->>D: PENDING_ENTROPY → FAILED (backstop for a lost async event)
+```
+
+Every transition is conditional on `status = PENDING_ENTROPY`, so the seeder and the GET backstop cannot both win. Lambda never retries the async event (event-invoke config: 0 retries, dropped after 300 s).
 
 ## Shard processing and finalize
 
