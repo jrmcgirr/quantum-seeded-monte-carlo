@@ -1,6 +1,6 @@
 # Quantum-Seeded Monte Carlo — Handoff
 
-Version 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
+Version 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
 
 Where this file disagrees with `docs/ASSIGNMENT.md`, **this file wins**; section 3 records how each conflict was resolved. The product view (who, why, success metrics) is in `docs/PRD.md`; the plan, gates and tickets are in `docs/ROADMAP.md`; the research behind every decision is in `docs/PRIMER.md`; the reasoning for each decision is in `docs/DECISIONS.md`.
 
@@ -144,6 +144,7 @@ clients/qmc.py               SigV4 CLI client for graders and tools (WS2)
 infra/                       Terraform root module + modules/{data,api,workers,observability,budget} (WS1)
 scripts/build_lambdas.py     deterministic Lambda zips into build/ (WS1)
 scripts/bootstrap.sh, scripts/*gitlab*   repo and GitLab automation (WS0)
+tests/conftest.py            shared fixtures: moto table/queues/SSM, IAM allow-list guard (WS0)
 tests/core/                  qmc_core unit tests (WS0)
 tests/api/  tests/worker/    handler unit tests (WS2, WS3)
 tests/correctness/           closed form, seed determinism, golden hash (WS4)
@@ -171,6 +172,22 @@ Fixed script paths the Makefile calls: `build` → `uv run python scripts/build_
 - Each workstream writes its AI usage log to `docs/ai-log/WSn.md` (its own file, so no merge conflicts); WS5 folds them into `AI_USAGE.md` at G4 (D35).
 - WS1 owns `infra/.tflint.hcl`; WS0 owns the root `.gitattributes` and `scripts/issue_map.csv`.
 - **Apply discipline (D33).** Only WS1 (until G1, from its branch rebased on `main`, announced to James) and the integrator (from the `main` checkout) run `make apply` or `make destroy`, one at a time; the local backend's lock file guards the shared state. After G1, every apply is from `main`. Settings come from `$HOME/.qmc/<env>.tfvars`, never from a checkout. WS4's tools read outputs with `make outputs` and never apply; WS4 writes `tools/drift_check.sh`, and the **integrator runs** `make drift-check` from `main` in the G2 window. Drills that need a configuration change (the fail-closed drill) are applied by the integrator with `make apply EXTRA_VARS='-var …'` and reverted by a normal `make apply`.
+
+### 4.1 Interface seams fixed at G0a
+
+The signatures and docstrings in `src/qmc_core/*.py` are the contract. In particular:
+
+- **Errors.** Every §5.3 code is a `qmc_core.errors.ErrorCode` member whose value is `(http_status, default_message)`. `QmcError(code, message=None, details=None, retry_after=None)` has `to_body()`. `EntropyError` is a subclass used by `seeds`. `params.parse_body` and `params.validate_job_request` **raise** `QmcError` (`INVALID_JSON`, `BODY_TOO_LARGE`, `VALIDATION_ERROR` with every detail, then `UNSUPPORTED`, then `FAULT_INJECTION_DISABLED`). They do not return error lists.
+- **Qrypt.** `seeds.parse_qrypt_response(status, body) -> bytes` (the 1,024-byte block). It maps every HTTP status and every body defect to its §5.3 code by raising `EntropyError`. WS2 owns transport errors (`QRYPT_TIMEOUT`, `QRYPT_UNREACHABLE`) and the `EntropyResult` provenance type in `qmc_api.qrypt`.
+- **Entropy injection.** `FakeEntropySource` lives in `qmc_api.qrypt` (WS2). Tests inject a source with `qmc_api.qrypt.set_entropy_source(source)` (`None` restores `QryptHttpSource`). The submit path obtains its source only through `qmc_api.qrypt.get_entropy_source()`. WS2 implements both functions; WS4's integration tests use them.
+- **When a second limiter slot is refused** before the one Qrypt retry, submit returns the original mapped Qrypt error (not `ENTROPY_RATE_LIMITED`), because the cause is Qrypt. `QryptLatencyMs` and a `qrypt_call` log line (§9.3) are emitted for **every** HTTP attempt, including failures and the retry.
+- **DynamoDB builders** return kwargs for the boto3 **resource** `Table` methods (`table.update_item(**ddb.mark_done(job_id, i))`). The one exception is `job_statuses(table_name, ids)`, which is for `boto3.resource("dynamodb").batch_get_item`. `ddb.is_conditional_failure(exc)` and `ddb.item_from_error(exc)` (the `ALL_OLD` item, deserialized) handle refusals. `shard_put(job_id, i, result: ShardResult, *, duration_ms, memory_mb, attempt, fingerprint, now_epoch)`.
+- **Decision.** `aggregate.decide(job_item, now_epoch=None) -> Decision(action, done, failed, add_failed, n_done_seen, reason)`, where `action` is `"none"`, `"complete"` or `"partial"`. The worker passes `now_epoch=None` (no reaping). The API passes the current time, so the deadline reaper (§7.7) is the same function. For `"partial"`: `aggregate(shards, only=decision.done)` → `ddb.finalize_partial(job_id, partial, decision.add_failed, decision.n_done_seen, now)`. On a conditional failure, re-decide once from `ddb.item_from_error(exc)` (worker) or a fresh consistent read (API).
+- **`ShardResult`** lives in `qmc_core.aggregate` (NumPy-free) and is re-exported by `sim`.
+- **Worker.** `ForcedFailure` is defined in `qmc_worker`. The worker reads `TABLE_NAME` and `QUEUE_URL` from the environment at call time (or caches them lazily on first use), never at import, so moto tests can set them per test. Poison messages get no visibility change (§7.6 step 1). `ShardFailures` is emitted only when `mark_failed` succeeds.
+- **Concurrency tests.** moto's in-process backend is not guaranteed to be thread-safe. Prove races with deterministic interleavings (run step A of worker 1, then step B of worker 2, …), not threads.
+- **Shared test fixtures** (`tests/conftest.py`, WS0): `aws_env`, `moto_aws`, `ddb_table` (resource Table `qmc-test`), `queues` (sets `QUEUE_URL`; redrive 3), `qrypt_param`, `enforce_off`, and `iam_guard`. Run handler code as `with iam_guard("api"|"worker") as calls: ...`. The guard records every botocore call and fails at block exit on any operation outside §8.3, even one the handler swallowed.
+- **Make arguments.** `make e2e ARGS=--fresh`; `make replay-check N=20` calls `tools/replay_many.py --n 20`. Every tool target passes `$(ARGS)`.
 
 ## 5. API contract (WS2)
 
@@ -539,7 +556,7 @@ Seven of ten free alarms. The Budget alert lives in Budgets, not CloudWatch.
 
 ### 9.3 Logs
 
-One JSON object per line from `qmc_core.logjson`, written to stdout the same way as EMF (never through `logging` handlers): `ts`, `level`, `event`, `fn` (`api`/`worker`), `env`, `request_id`, and `job_id`, `shard_index`, `attempt` where known. A redaction filter drops any key named like `authorization`, `token`, `api_key`, `secret` or `block`, and the API never logs request headers. Retention 14 days. Lambda `log_format` stays `Text` (our lines are already JSON, and EMF extraction reads them).
+One JSON object per line from `qmc_core.logjson`, written to stdout the same way as EMF (never through `logging` handlers): `ts`, `level`, `event`, `fn` (`api`/`worker`), `env`, `request_id`, and `job_id`, `shard_index`, `attempt` where known. Every Qrypt HTTP attempt (including the retry and failures) logs `event: "qrypt_call"` with `http_status` (null on a transport error), `latency_ms`, `attempt` (1 or 2) and `outcome` (`ok` or the §5.3 code); WS4's burst test counts these lines. A redaction filter drops any key named like `authorization`, `token`, `api_key`, `secret` or `block`, and the API never logs request headers. Retention 14 days. Lambda `log_format` stays `Text` (our lines are already JSON, and EMF extraction reads them).
 
 ## 10. Cost guardrails (I7)
 

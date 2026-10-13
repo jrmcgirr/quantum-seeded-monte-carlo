@@ -19,6 +19,7 @@ Blocked-by links use GitLab's `is_blocked_by` link type and fall back to `relate
 on editions where blocking links are not available. Dependencies are also written into each
 issue body, so nothing is lost either way.
 """
+
 import argparse
 import csv
 import json
@@ -39,36 +40,71 @@ PREFIX = "QMC-"
 # Gates in US Central time (see docs/HANDOFF.md section 2). GitLab milestones carry dates only,
 # and a milestone's due date must not be before its start date.
 MILESTONES = {
-    "M0": ("M0 - G0 Contract frozen", "2026-10-12", "2026-10-13",
-           "Gate G0, Tue 2026-10-13 12:00 PM Central. Day 0 prerequisites done; qmc_core implemented and "
-           "tested (coverage >= 90%); skeleton, Makefile, CI green; NumPy and SIMD pins recorded; tag g0-contract-frozen."),
-    "M1": ("M1 - G1 Deployed end to end", "2026-10-13", "2026-10-13",
-           "Gate G1, Tue 2026-10-13 6:00 PM Central. make apply from empty; make e2e: 1M-path job COMPLETE "
-           "within 3 SE of Black-Scholes, then a bit-identical replay; correctness and golden tests green."),
-    "M2": ("M2 - G2 Hardened", "2026-10-13", "2026-10-14",
-           "Gate G2, Wed 2026-10-14 12:00 PM Central. Every edge case demonstrated on the deployed stack; "
-           "PARTIAL + DLQ alarm email; Budget and alarms live; apply/plan/destroy/apply with no drift or orphans."),
-    "M3": ("M3 - G3 Proven", "2026-10-14", "2026-10-14",
-           "Gate G3, Wed 2026-10-14 4:00 PM Central. Benchmarks, replay x20 bit-identical, coverage >= 80%, "
-           "Checkov green with justified suppressions, TEST_RESULTS.md; stretch merged or cut."),
-    "M4": ("M4 - G4 Finish line", "2026-10-14", "2026-10-14",
-           "Gate G4, Wed 2026-10-14 9:00 PM Central (buffer to 11:59 PM; due Wednesday). README quick-start, "
-           "diagram, cost note, AI_USAGE, video <= 5 min, fresh-clone rehearsal, stack deployed, GitHub mirror current."),
+    "M0": (
+        "M0 - G0 Contract frozen",
+        "2026-10-12",
+        "2026-10-13",
+        "Gate G0, Tue 2026-10-13 12:00 PM Central. Day 0 prerequisites done; qmc_core implemented and "
+        "tested (coverage >= 90%); skeleton, Makefile, CI green; NumPy and SIMD pins recorded; tag g0-contract-frozen.",
+    ),
+    "M1": (
+        "M1 - G1 Deployed end to end",
+        "2026-10-13",
+        "2026-10-13",
+        "Gate G1, Tue 2026-10-13 6:00 PM Central. make apply from empty; make e2e: 1M-path job COMPLETE "
+        "within 3 SE of Black-Scholes, then a bit-identical replay; correctness and golden tests green.",
+    ),
+    "M2": (
+        "M2 - G2 Hardened",
+        "2026-10-13",
+        "2026-10-14",
+        "Gate G2, Wed 2026-10-14 12:00 PM Central. Every edge case demonstrated on the deployed stack; "
+        "PARTIAL + DLQ alarm email; Budget and alarms live; apply/plan/destroy/apply with no drift or orphans.",
+    ),
+    "M3": (
+        "M3 - G3 Proven",
+        "2026-10-14",
+        "2026-10-14",
+        "Gate G3, Wed 2026-10-14 4:00 PM Central. Benchmarks, replay x20 bit-identical, coverage >= 80%, "
+        "Checkov green with justified suppressions, TEST_RESULTS.md; stretch merged or cut.",
+    ),
+    "M4": (
+        "M4 - G4 Finish line",
+        "2026-10-14",
+        "2026-10-14",
+        "Gate G4, Wed 2026-10-14 9:00 PM Central (buffer to 11:59 PM; due Wednesday). README quick-start, "
+        "diagram, cost note, AI_USAGE, video <= 5 min, fresh-clone rehearsal, stack deployed, GitHub mirror current.",
+    ),
 }
 
 LABELS = {
-    "ws0": "#2c3e50", "ws1": "#1f78b4", "ws2": "#33a02c", "ws3": "#e31a1c", "ws4": "#ff7f00", "ws5": "#6a3d9a",
-    "early": "#c0392b", "final": "#f39c12", "stretch": "#95a5a6",
+    "ws0": "#2c3e50",
+    "ws1": "#1f78b4",
+    "ws2": "#33a02c",
+    "ws3": "#e31a1c",
+    "ws4": "#ff7f00",
+    "ws5": "#6a3d9a",
+    "early": "#c0392b",
+    "final": "#f39c12",
+    "stretch": "#95a5a6",
     "never-cut": "#000000",
-    "infra": "#7f8c8d", "core": "#8e44ad", "api": "#2980b9", "worker": "#27ae60",
-    "verify": "#e67e22", "docs": "#16a085",
+    "infra": "#7f8c8d",
+    "core": "#8e44ad",
+    "api": "#2980b9",
+    "worker": "#27ae60",
+    "verify": "#e67e22",
+    "docs": "#16a085",
 }
 OWNERS = {"ws0", "ws1", "ws2", "ws3", "ws4", "ws5"}
 GATES = {"early", "final", "stretch"}
 AREAS = {"infra", "core", "api", "worker", "verify", "docs"}
 WS_NAMES = {
-    "ws0": "WS0 Foundation and contract", "ws1": "WS1 Infrastructure", "ws2": "WS2 API",
-    "ws3": "WS3 Worker", "ws4": "WS4 Verification", "ws5": "WS5 Docs and demo",
+    "ws0": "WS0 Foundation and contract",
+    "ws1": "WS1 Infrastructure",
+    "ws2": "WS2 API",
+    "ws3": "WS3 Worker",
+    "ws4": "WS4 Verification",
+    "ws5": "WS5 Docs and demo",
 }
 
 
@@ -91,32 +127,32 @@ def validate(rows):
     known = set(ids)
     for r in rows:
         if not r["id"].startswith(PREFIX):
-            problems.append(f'{r["id"]}: id must start with {PREFIX}')
+            problems.append(f"{r['id']}: id must start with {PREFIX}")
         if r["owner"] not in OWNERS:
-            problems.append(f'{r["id"]}: unknown owner {r["owner"]}')
+            problems.append(f"{r['id']}: unknown owner {r['owner']}")
         if r["gate"] not in GATES:
-            problems.append(f'{r["id"]}: unknown gate {r["gate"]}')
+            problems.append(f"{r['id']}: unknown gate {r['gate']}")
         if r["area"] not in AREAS:
-            problems.append(f'{r["id"]}: unknown area {r["area"]}')
+            problems.append(f"{r['id']}: unknown area {r['area']}")
         if r["milestone"] not in MILESTONES:
-            problems.append(f'{r["id"]}: unknown milestone {r["milestone"]}')
+            problems.append(f"{r['id']}: unknown milestone {r['milestone']}")
         for d in deps_of(r):
             if d not in known:
-                problems.append(f'{r["id"]}: blocked by unknown ticket {d}')
+                problems.append(f"{r['id']}: blocked by unknown ticket {d}")
             if d == r["id"]:
-                problems.append(f'{r["id"]}: blocks itself')
+                problems.append(f"{r['id']}: blocks itself")
     graph = {r["id"]: deps_of(r) for r in rows}
     state = {}
 
     def visit(n, stack):
         if state.get(n) == 1:
-            problems.append("dependency cycle: " + " -> ".join(stack + [n]))
+            problems.append("dependency cycle: " + " -> ".join([*stack, n]))
             return
         if state.get(n) == 2:
             return
         state[n] = 1
         for d in graph.get(n, []):
-            visit(d, stack + [n])
+            visit(d, [*stack, n])
         state[n] = 2
 
     for n in graph:
@@ -134,8 +170,12 @@ class GitLab:
         if params:
             url += "?" + urllib.parse.urlencode(params)
         body = json.dumps(data).encode() if data is not None else None
-        req = urllib.request.Request(url, data=body, method=method, headers={
-            "PRIVATE-TOKEN": self.token, "Content-Type": "application/json"})
+        req = urllib.request.Request(
+            url,
+            data=body,
+            method=method,
+            headers={"PRIVATE-TOKEN": self.token, "Content-Type": "application/json"},
+        )
         try:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 raw = resp.read()
@@ -166,21 +206,23 @@ class GitLab:
 
 
 def issue_title(r):
-    return f'[{r["id"]}] {r["title"]}'
+    return f"[{r['id']}] {r['title']}"
 
 
 def ticket_of(title):
-    return title[1:title.index("]")] if title.startswith("[" + PREFIX) else None
+    return title[1 : title.index("]")] if title.startswith("[" + PREFIX) else None
 
 
 def issue_body(r):
     deps = deps_of(r)
-    blocked = f'\n\n**Blocked by:** {", ".join(deps)}' if deps else ""
+    blocked = f"\n\n**Blocked by:** {', '.join(deps)}" if deps else ""
     never = "  ·  **Never cut**" if r.get("never_cut", "").strip().lower() == "yes" else ""
-    return (f'{r["description"]}{blocked}\n\n---\n'
-            f'**Workstream:** {WS_NAMES[r["owner"]]}  ·  **Gate:** {r["gate"]}  ·  '
-            f'**Priority:** {r["priority"]}{never}  ·  **Ticket:** {r["id"]}\n\n'
-            f'Spec: `docs/HANDOFF.md` · Prompt: `docs/prompts/{r["owner"].upper()}-*.md`')
+    return (
+        f"{r['description']}{blocked}\n\n---\n"
+        f"**Workstream:** {WS_NAMES[r['owner']]}  ·  **Gate:** {r['gate']}  ·  "
+        f"**Priority:** {r['priority']}{never}  ·  **Ticket:** {r['id']}\n\n"
+        f"Spec: `docs/HANDOFF.md` · Prompt: `docs/prompts/{r['owner'].upper()}-*.md`"
+    )
 
 
 def labels_for(r):
@@ -191,10 +233,14 @@ def labels_for(r):
 
 
 def main():
-    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap = argparse.ArgumentParser(
+        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
+    )
     ap.add_argument("--apply", action="store_true", help="write to GitLab (default is a dry run)")
     ap.add_argument("--limit", type=int, default=None, help="create at most N issues")
-    ap.add_argument("--link-deps", action="store_true", help="add blocked-by links between existing issues")
+    ap.add_argument(
+        "--link-deps", action="store_true", help="add blocked-by links between existing issues"
+    )
     ap.add_argument("--offline", action="store_true", help="validate the CSV only")
     args = ap.parse_args()
 
@@ -213,7 +259,7 @@ def main():
     mode = "APPLY" if args.apply else "DRY RUN"
     print(f"[{mode}] {GITLAB_URL} · {PROJECT}")
 
-    existing_labels = {l["name"] for l in gl.list_all("/labels")}
+    existing_labels = {lab["name"] for lab in gl.list_all("/labels")}
     for name, color in LABELS.items():
         if name not in existing_labels:
             print(f"  label + {name}")
@@ -230,8 +276,10 @@ def main():
             continue
         print(f"  milestone + {title} (due {due})")
         if args.apply:
-            s, d, _ = gl.post("/milestones", {"title": title, "description": desc,
-                                              "start_date": start, "due_date": due})
+            s, d, _ = gl.post(
+                "/milestones",
+                {"title": title, "description": desc, "start_date": start, "due_date": due},
+            )
             if s not in (200, 201):
                 sys.exit(f"milestone {title} failed: {s} {d}")
             ms_id[key] = d["id"]
@@ -247,7 +295,11 @@ def main():
         print(f"  issue + {title}")
         made += 1
         if args.apply:
-            payload = {"title": title, "description": issue_body(r), "labels": ",".join(labels_for(r))}
+            payload = {
+                "title": title,
+                "description": issue_body(r),
+                "labels": ",".join(labels_for(r)),
+            }
             if r["milestone"] in ms_id:
                 payload["milestone_id"] = ms_id[r["milestone"]]
             s, d, _ = gl.post("/issues", payload)
@@ -257,7 +309,9 @@ def main():
     print(f"  {made} issue(s) {'created' if args.apply else 'would be created'}")
 
     # QMC id -> GitLab issue number (iids follow creation order, not QMC numbers)
-    mapping = sorted((ticket_of(t), i["iid"], i.get("web_url", "")) for t, i in issues.items() if ticket_of(t))
+    mapping = sorted(
+        (ticket_of(t), i["iid"], i.get("web_url", "")) for t, i in issues.items() if ticket_of(t)
+    )
     if mapping:
         with open(os.path.join(HERE, "issue_map.csv"), "w", newline="") as f:
             w = csv.writer(f)
@@ -272,23 +326,34 @@ def main():
             src = by_ticket.get(r["id"])
             if not src:
                 continue
-            existing = gl._req("GET", f'/issues/{src["iid"]}/links')[1] or []
+            existing = gl._req("GET", f"/issues/{src['iid']}/links")[1] or []
             linked = {x.get("iid") for x in existing if isinstance(x, dict)}
             for dep in deps_of(r):
                 tgt = by_ticket.get(dep)
                 if not tgt or tgt["iid"] in linked:
                     continue
-                print(f'  link {r["id"]} {link_type} {dep}')
+                print(f"  link {r['id']} {link_type} {dep}")
                 if not args.apply:
                     continue
-                s, d, _ = gl.post(f'/issues/{src["iid"]}/links', {
-                    "target_project_id": src["project_id"], "target_issue_iid": tgt["iid"], "link_type": link_type})
+                s, d, _ = gl.post(
+                    f"/issues/{src['iid']}/links",
+                    {
+                        "target_project_id": src["project_id"],
+                        "target_issue_iid": tgt["iid"],
+                        "link_type": link_type,
+                    },
+                )
                 if s in (400, 403) and link_type != "relates_to":
                     print("  blocking links unavailable on this edition; using relates_to")
                     link_type = "relates_to"
-                    s, d, _ = gl.post(f'/issues/{src["iid"]}/links', {
-                        "target_project_id": src["project_id"], "target_issue_iid": tgt["iid"],
-                        "link_type": link_type})
+                    s, d, _ = gl.post(
+                        f"/issues/{src['iid']}/links",
+                        {
+                            "target_project_id": src["project_id"],
+                            "target_issue_iid": tgt["iid"],
+                            "link_type": link_type,
+                        },
+                    )
                 if s not in (200, 201, 409):
                     print(f"    link failed: {s} {d}")
 

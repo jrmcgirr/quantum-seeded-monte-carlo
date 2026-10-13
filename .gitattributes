@@ -1,0 +1,8 @@
+* text=auto eol=lf
+*.sh text eol=lf
+Makefile text eol=lf
+*.zip binary
+*.png binary
+*.jpg binary
+*.whl binary
+uv.lock linguist-generated=true
