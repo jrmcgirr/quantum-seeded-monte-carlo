@@ -62,6 +62,31 @@ Compute is nowhere near the limit. Even the worst case leaves room for about 4 t
 
 Qrypt is outside AWS. The trial key is free, and each submit spends 1 KiB of its monthly quota.
 
+## Cross-check against billed duration
+
+WS4 matched Lambda REPORT lines (billed duration) to two deployed 1M-path, 10-shard jobs (`docs/TEST_RESULTS.md`, "Cost re-run after contract change 009", 2026-10-13 16:36–16:37Z):
+
+- A **warm** worker invocation was billed **20–52 ms**, and a **cold** one **1,085–1,442 ms** including init, at 1,024 MB.
+- Both arithmetic cases above bound these figures. The measured case uses an average of 88.5 ms per worker call. The worst case uses 1.469 s per call (0.843 s maximum init + 0.626 s maximum duration).
+
+## Per-job cost attribution (`cost_estimate`): not yet a bill
+
+Every finished job now carries a `cost_estimate` (QMC-126).
+
+**Example:** job `6b45b87e775444ce9fa0b56a64c48c67` (plain, 1M paths, 10 shards, half of the workers cold) reported:
+
+```json
+{"lambda_gb_seconds": 5.43, "lambda_requests": 11, "sqs_requests": 21, "dynamodb_write_units": 26,
+ "usd_at_list_price": 0.000117350181, "usd_after_free_tier": 0.0}
+```
+
+**Accuracy:** do not read it as an accurate bill yet.
+
+- For that job, the worker part of the estimate was 0.856× the billed worker GB-s (5.305 against 6.200).
+- With every worker warm (job `a8ac980912434d829ef4cddb0edd0399`) it was **0.17×** (0.046 against 0.271 GB-s).
+- The cause: the estimate times each shard only up to the result write. The work after it is billed but not recorded: the put itself, the done-set update, EMF, and the finalize on the last shard. That is about 15–45 ms per warm call.
+- *TBD: WS0 and James are deciding the fix.* The arithmetic in this note uses the measured durations, not `cost_estimate`.
+
 ## At rest
 
 With no jobs, the only recurring usage is:
