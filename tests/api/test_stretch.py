@@ -415,3 +415,68 @@ def test_second_pending_fail_is_refused_quietly(api, invokes, capsys):
     out = capsys.readouterr().out
     assert "pending_fail_refused" in out and '"SeedingFailures":1' not in out
     assert job_item(api, job_id)["fail_reason"] == "PENDING_EXPIRED"
+
+
+# ---- WS3 review of !43 ------------------------------------------------------------------------
+
+
+def test_duplicate_seeder_delivery_does_not_double_the_retry_chain(
+    api, invokes, sleeps, seeder, capsys
+):
+    job_id = queue_one(api, invokes)
+    for _ in range(2):  # the same async event delivered twice (at-least-once)
+        api.fake.failures = [UNAVAILABLE, UNAVAILABLE]
+        seeder(job_id, 1)
+    assert [i["event"]["attempt"] for i in invokes] == [1, 2]  # one attempt 2, not two
+    assert int(job_item(api, job_id)["entropy_attempts"]) == 3
+    assert "duplicate_seeder" in capsys.readouterr().out
+
+
+def test_seeder_publishes_without_reading_the_job_again(api, invokes, sleeps, seeder, monkeypatch):
+    """A failed read after pending_to_queued must not leave a QUEUED job without messages."""
+    from qmc_api import jobs
+
+    job_id = queue_one(api, invokes)
+    real, reads = jobs.read, []
+
+    def read_once(table, jid):
+        reads.append(jid)
+        if len(reads) > 1:
+            raise RuntimeError("throttled")
+        return real(table, jid)
+
+    monkeypatch.setattr(jobs, "read", read_once)
+    seeder(job_id, 1)
+    assert len(reads) == 1
+    assert job_item(api, job_id)["status"] == "QUEUED" and len(api.messages()) == 4
+
+
+def test_seeder_enqueue_failure_ends_failed_not_queued(api, invokes, sleeps, seeder, monkeypatch):
+    from qmc_api import aws
+
+    job_id = queue_one(api, invokes)
+
+    class Broken:
+        def send_message_batch(self, **kw):
+            raise RuntimeError("sqs down")
+
+    monkeypatch.setattr(aws, "sqs", lambda: Broken())
+    seeder(job_id, 1)
+    job = job_item(api, job_id)
+    assert job["status"] == "FAILED" and job["fail_reason"] == "RuntimeError"
+
+
+def test_joblist_failure_when_queueing_fails_the_pending_job(api, invokes, monkeypatch):
+    from botocore.exceptions import ClientError
+
+    from qmc_core import ddb as core_ddb
+
+    def throttled(item):
+        raise ClientError({"Error": {"Code": "ProvisionedThroughputExceededException"}}, "PutItem")
+
+    monkeypatch.setattr(core_ddb, "joblist_put", throttled)
+    api.fake.failures = [UNAVAILABLE, UNAVAILABLE]
+    status, _, body = api.call("POST", "/jobs", QUEUE)
+    assert (status, body["error"]["code"]) == (503, UNAVAILABLE.name)
+    [job] = [j for j in api.items("JOB#") if j["sk"] == "META"]
+    assert job["status"] == "FAILED" and not invokes

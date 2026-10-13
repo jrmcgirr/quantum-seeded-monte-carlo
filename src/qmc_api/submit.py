@@ -141,12 +141,12 @@ def _queue_pending(table, job_id: str, spec: JobSpec, code: ErrorCode) -> tuple[
         last_error=code.name,
     )
     table.put_item(**ddb.job_put(item))
-    table.put_item(**ddb.joblist_put(item))
     logjson.log("entropy_pending", cause=code.name)
     try:
+        table.put_item(**ddb.joblist_put(item))
         pending.invoke_seeder(job_id, 1)
-    except Exception as exc:  # no seeder will run: fail now rather than at the expiry backstop
-        logjson.log("seeder_invoke_failed", level="ERROR", error=type(exc).__name__)
+    except Exception as exc:  # no seeder will run (or nobody can list it): fail it now
+        logjson.log("pending_setup_failed", level="ERROR", error=type(exc).__name__)
         pending.fail_pending(table, job_id, code)
         raise QmcError(code) from None
     return 202, _accepted(item)

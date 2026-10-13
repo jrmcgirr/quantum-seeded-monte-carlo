@@ -101,7 +101,7 @@ def _attempt(job_id, attempt: int, context) -> None:
         return
 
     try:
-        table.update_item(
+        queued = table.update_item(
             **ddb.pending_to_queued(
                 job_id,
                 seed.hex,
@@ -109,7 +109,7 @@ def _attempt(job_id, attempt: int, context) -> None:
                 time.time(),
                 aws.env_int("JOB_DEADLINE_S"),
             )
-        )
+        )["Attributes"]
     except Exception as exc:
         if not ddb.is_conditional_failure(exc):
             raise
@@ -117,7 +117,9 @@ def _attempt(job_id, attempt: int, context) -> None:
         return
     logjson.log("entropy_seeded")
     try:
-        submit.publish(table, jobs.read(table, job_id), joblist=False)
+        # The ALL_NEW item: no read between QUEUED and publish, whose failure handling marks
+        # the job FAILED, so a QUEUED job never lacks its messages.
+        submit.publish(table, queued, joblist=False)
     except QmcError:
         return  # already marked FAILED and logged by publish
     emf.emit("JobsSubmitted", 1, job_id=job_id, pending_attempt=attempt)
@@ -129,11 +131,20 @@ def _failed(table, job_id: str, attempt: int, code: ErrorCode) -> None:
         fail_pending(table, job_id, code)
         return
     try:
-        table.update_item(**ddb.pending_attempt_failed(job_id, code.name))
+        attempts = int(
+            table.update_item(**ddb.pending_attempt_failed(job_id, code.name))["Attributes"][
+                "entropy_attempts"
+            ]
+        )
     except Exception as exc:
         if not ddb.is_conditional_failure(exc):
             raise
         logjson.log("pending_attempt_refused", cause=code.name)
+        return
+    # Async invocation is at-least-once: the submit's failure is attempt 0's count of 1, so
+    # seeder attempt n leaves n + 1. Any other count means a duplicate run got here first.
+    if attempts != attempt + 1:
+        logjson.log("duplicate_seeder", entropy_attempts=attempts)
         return
     if attempt >= aws.env_int("PENDING_MAX_ATTEMPTS"):
         fail_pending(table, job_id, code)
