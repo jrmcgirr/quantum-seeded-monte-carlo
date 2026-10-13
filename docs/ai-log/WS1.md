@@ -22,7 +22,7 @@
 - **Open:**
   - The SNS subscription is PendingConfirmation (James).
   - QMC-115's test alarm email: run after confirmation.
-  - `kms:Decrypt`: not yet tested; it needs WS2's submit path (`GetParameter` with `WithDecryption`).
+  - `kms:Decrypt`: not needed (job 5358ec35, HANDOFF 1.6 §8.3); see the follow-up entry below.
   - `make e2e` timing from empty belongs to the drift check.
 - **Human checks and changes:**
   - James approved installing terraform 1.16.5 (HashiCorp tap), tflint 0.64.0 (GitHub release, checksum verified) and checkov 3.3.28 (pipx).

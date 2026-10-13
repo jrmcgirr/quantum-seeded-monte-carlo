@@ -1,6 +1,11 @@
 locals {
   function_name = "${var.name}-api"
+  # Built from the name, not aws_lambda_function.api.arn, which goes unknown during an in-place update and would
+  # make every build_sha bump re-plan the invoke policies.
+  function_arn = "arn:aws:lambda:${data.aws_region.current.region}:${var.account_id}:function:${local.function_name}"
 }
+
+data "aws_region" "current" {}
 
 # Created before the function, with retention, so Lambda never creates a never-expiring group that survives destroy.
 resource "aws_cloudwatch_log_group" "api" {
@@ -128,7 +133,7 @@ data "aws_iam_policy_document" "invoke" {
   statement {
     sid       = "InvokeFunctionUrl"
     actions   = ["lambda:InvokeFunctionUrl"]
-    resources = [aws_lambda_function.api.arn]
+    resources = [local.function_arn]
 
     condition {
       test     = "StringEquals"
@@ -140,7 +145,7 @@ data "aws_iam_policy_document" "invoke" {
   statement {
     sid       = "InvokeViaFunctionUrl"
     actions   = ["lambda:InvokeFunction"]
-    resources = [aws_lambda_function.api.arn]
+    resources = [local.function_arn]
 
     condition {
       test     = "Bool"
