@@ -12,7 +12,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` | PASS, z = −2.748 (frozen seed; see below) |
 | Core 5: bit-identical replay | `make test-golden`, `tests/integration/test_pipeline.py::test_replay_is_bit_identical`, `make e2e`, `make replay-check N=20` | golden PASS (emulated GitLab 52736, native x86 GitHub run 38392842904, Lambda per-shard), integration PASS, `make e2e` replay bit-identical PASS (c768aea); ×20 **pending** |
 | Core 6: forced failure → DLQ alarm + email | `make warm-dlq`, `make force-failure ARGS="--purge-first --duplicate"` | PASS (f40a083): PARTIAL [3] +13 s, DLQ 1 +23 s, OK→ALARM +237 s, SNS publish OK; email screenshot **pending** (James) |
-| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill: **fails closed (503, nothing written, alarm) but FAIL on the cause**: Qrypt returns 403, reported as QRYPT_QUOTA_EXHAUSTED (finding below) |
+| Fail-closed seeding | `tests/integration/test_submit.py::test_qrypt_failure_rejects_and_writes_nothing`, WS2 unit tests; deployed secret-failure check (below); deployed decoy-token drill | integration PASS; deployed SECRET_UNAVAILABLE PASS (c768aea); decoy drill 11:51: fails closed, but the cause was wrong (Qrypt 403 → QRYPT_QUOTA_EXHAUSTED); **fixed by contract change 003 (MR !9)**; re-run **pending** |
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker duration from `make bench` | deployed validation PASS; duration **pending** |
@@ -207,7 +207,8 @@ API log (`FilterLogEvents`, `/aws/lambda/qmc-dev-api`):
 ```
 
 - **Holds:** both submits got 503 and no job was written (neither id is in `GET /jobs`; `GET /jobs/{id}` → 404 for both). The 403 was not retried, per §7.5. `qmc-dev-seeding-failures` went OK → ALARM at 11:52:32Z.
-- **Finding (FAIL, reported to WS0):** Qrypt answers an invalid token with **HTTP 403, not 401**. Under HANDOFF §5.3, 403 maps to `QRYPT_QUOTA_EXHAUSTED`, so an invalid or expired token is reported to the operator as an exhausted quota: the wrong cause. The assertion has not been loosened; the fix is a contract decision (WS0).
+- **Finding (FAIL, reported to WS0):** Qrypt answers an invalid token with **HTTP 403, not 401**. Under HANDOFF §5.3, 403 maps to `QRYPT_QUOTA_EXHAUSTED`, so an invalid or expired token is reported to the operator as an exhausted quota: the wrong cause. The assertion was not loosened.
+- **Fixed by contract change 003 (MR !9),** live at 12:04:35Z (build 855e8d6). WS0 probed Qrypt and found that a bad token gets `403 {"error":"Forbidden or entropy quota reached"}`, identical to an exhausted quota. 403 is now `QRYPT_FORBIDDEN` (503), and its message names both causes. The drill test expects `QRYPT_FORBIDDEN`; the re-run is recorded below when done. The output above is kept as the original finding.
 
 ## Fail closed on the live stack: secret failure (I1, I6), build_sha c768aea
 
