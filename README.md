@@ -165,7 +165,7 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 
 *TBD: request fields and limits, the job view, and the error table (HANDOFF §5), checked against the deployed API.*
 
-**Antithetic variates (opt-in).** Add `"variance_reduction": "antithetic"` to a submit (with an even `paths` ≥ 4). Each pair `(z, −z)` counts as one sample, so `result.n` is the number of pairs. At 1M paths the standard error drops from 0.0147 to 0.0104, a ratio of 0.707, so the variance is about halved at no extra simulation cost. The estimate was z = +0.868 from Black-Scholes, with a seed fixed before the code existed (D15, `tests/correctness/test_antithetic.py`). *TBD: a deployed antithetic job and its replay.*
+**Antithetic variates (opt-in).** Add `"variance_reduction": "antithetic"` to a submit (with an even `paths` ≥ 4). Each pair `(z, −z)` counts as one sample, so `result.n` is the number of pairs. At 1M paths the standard error drops from 0.0147 to 0.0104, a ratio of 0.707, so the variance is about halved at no extra simulation cost. Locally the estimate was z = +0.868 from Black-Scholes, with a seed fixed before the code existed (`tests/correctness/test_antithetic.py`). On the deployed stack, job `166f446d…` gave 500,000 pairs, z = −0.825 and SE 0.707× the plain job's, and its replay `e565b04f…` was bit-identical (D15, [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
 
 **Queue instead of reject (opt-in PENDING_ENTROPY).** By default a submit that cannot get entropy fails closed. Add `"on_entropy_failure": "queue"` (or `--queue` on the client) and a *retryable* failure (our own 429 `ENTROPY_RATE_LIMITED`, a Qrypt 429 or 5xx, a timeout or a network error) returns 202 with `"status": "PENDING_ENTROPY"` instead:
 
@@ -173,7 +173,15 @@ curl --aws-sigv4 "aws:amz:us-east-2:lambda" --user "$AWS_ACCESS_KEY_ID:$AWS_SECR
 uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10 --queue
 ```
 
-The job holds no seed yet. The API retries in the background (4 attempts after waits of 2, 4, 6 and 6 s: `PENDING_BACKOFF_MS` is 2000,4000,8000 with the last value repeating, capped so each attempt fits the API's 10 s timeout) and the job becomes `QUEUED` only with a Qrypt-derived seed, or ends `FAILED` naming the cause; a GET after 120 s fails a job whose retry was lost. An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409. Contract change 008; *TBD: WS4's drill.*
+The job holds no seed yet. The API retries in the background, and the job becomes `QUEUED` only with a Qrypt-derived seed, or ends `FAILED` naming the cause:
+
+- Up to 4 attempts at Qrypt, after waits of 2, 4, 6 and 6 s. `PENDING_BACKOFF_MS` is 2000,4000,8000, with the last value repeating, and each wait is capped so the attempt fits the API's 10 s timeout.
+- If our own 2 s limiter is busy (another submit or seeder holds the slot), the seeder waits for the slot plus 0–2 s of random jitter. That wait does not use up an attempt (MR !57).
+- The job gives up after 120 s. A GET after that fails a job whose retry was lost.
+
+An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409.
+
+**Drill** (WS4, `main` `effb192`, 2026-10-13 19:42Z, contract change 008): 10 concurrent queued submits all ended **COMPLETE**. The 10 Qrypt calls all returned 200, 2.19–3.45 s apart, with at most 5 in any rolling 10 s. The replay of queued job `afaf4d85…` (`8876f9c9…`) was bit-identical. The first run, before the slot-wait fix, completed only 5 of 10, because the seeders retried in step and spent their attempts losing the slot to each other ([docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)).
 
 ## How bit-identical replay works, and when it would not hold
 
@@ -248,8 +256,8 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 | Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox |
 | Ephemeral per-branch environments | **Parked** (D46) | The account's SCP denies creating OIDC providers, so CI would need a long-lived admin-level key in a public repo; per-environment alarms and metrics would exceed the free tier's 10 |
 | CI deploys | **Out** (D21) | Same credential problem; every apply runs from `main` by the integrator (D33) |
-| Step Functions watcher | **Built, off by default** (`enable_step_functions = true` in your tfvars to try it; D21, contract change 007) | Polls each job every 10 s until it is terminal, so its execution history shows each job's outcome. Free only up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day ([docs/COST.md](docs/COST.md)) |
-| PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | **Built, opt-in per request** (D21, contract change 008) | Off unless a submit asks for it, so the default stays strict fail-closed (I1). At most 10 pending jobs and 4 attempts over about 2 minutes |
+| Step Functions watcher | **Built, off by default** (`enable_step_functions = true` in your tfvars to try it; D21, contract change 007) | Polls each job every 10 s until it is terminal, so its execution history shows each job's outcome. In WS4's drill a COMPLETE job's execution SUCCEEDED (10 s) and a forced PARTIAL job's FAILED with `JobNotComplete` (20 s); it was switched off again afterwards. Free only up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day ([docs/COST.md](docs/COST.md)) |
+| PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | **Built, opt-in per request** (D21, contract change 008) | Off unless a submit asks for it, so the default stays strict fail-closed (I1). At most 10 pending jobs, 4 attempts and 120 s. Drill: 10 of 10 queued jobs COMPLETE (see the API reference) |
 
 Other known limits:
 

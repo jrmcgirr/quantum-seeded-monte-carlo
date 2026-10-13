@@ -82,7 +82,7 @@ flowchart LR
     style SFN stroke-dasharray: 5 5
 ```
 
-Dashed outline: the Step Functions watcher and its role exist only with `enable_step_functions = true` (contract change 007). In `dev` it is off, and `ListStateMachines` returns none (2026-10-13, after the apply of `main` `581563d`).
+Dashed outline: the Step Functions watcher and its role exist only with `enable_step_functions = true` (contract change 007). WS4's drill switched it on (18:16Z): a COMPLETE job's execution SUCCEEDED and a PARTIAL job's FAILED with `JobNotComplete`. It was switched off again at 19:30Z, and `ListStateMachines` returns none (docs/TEST_RESULTS.md).
 
 *TBD (QMC-152): reconcile with `terraform state list` (data sources, `aws_iam_policy_document`s, the redrive policy, the topic policy, the Function URL permission) and mark the dashboard as cut if QMC-118 is cut.*
 
@@ -133,6 +133,9 @@ sequenceDiagram
     A-->>C: 202 job_id, status PENDING_ENTROPY
     loop attempt 1..4 (PENDING_MAX_ATTEMPTS), waits 2, 4, 6, 6 s
         S->>D: Qrypt gap slot
+        opt slot refused (not an attempt)
+            S->>S: wait Retry-After + 0–2 s jitter, in process or by a self-invoke hop (≤ 15)
+        end
         S->>Q: GET 1 KiB
         alt block received
             S->>D: entropy claim, then PENDING_ENTROPY → QUEUED with seed (conditional)
@@ -148,7 +151,7 @@ sequenceDiagram
     A->>D: PENDING_ENTROPY → FAILED (backstop for a lost async event)
 ```
 
-Every transition is conditional on `status = PENDING_ENTROPY`, so the seeder and the GET backstop cannot both win. Lambda never retries the async event (event-invoke config: 0 retries, dropped after 300 s).
+Every transition is conditional on `status = PENDING_ENTROPY`, so the seeder and the GET backstop cannot both win. Lambda never retries the async event (event-invoke config: 0 retries, dropped after 300 s). A refused limiter slot does not count as an attempt (MR !57). Without that rule, seeders woken together lost the slot to each other and 5 of 10 jobs in WS4's first burst failed. With it, all 10 completed (docs/TEST_RESULTS.md).
 
 ## Shard processing and finalize
 

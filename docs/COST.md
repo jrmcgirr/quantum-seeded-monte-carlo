@@ -73,24 +73,32 @@ WS4 matched Lambda REPORT lines (billed duration) to two deployed 1M-path, 10-sh
 
 Every finished job now carries a `cost_estimate` (QMC-126).
 
-**Example:** job `6b45b87e775444ce9fa0b56a64c48c67` (plain, 1M paths, 10 shards, half of the workers cold) reported:
+**Example:** job `99d738cb3c864dbebc4680adcff33b24` (plain, 1M paths, 10 shards, every worker warm), read back with `clients/qmc.py get`:
 
 ```json
-{"lambda_gb_seconds": 5.43, "lambda_requests": 11, "sqs_requests": 21, "dynamodb_write_units": 26,
- "usd_at_list_price": 0.000117350181, "usd_after_free_tier": 0.0}
+{"lambda_gb_seconds": 0.388, "lambda_requests": 11, "sqs_requests": 21, "dynamodb_write_units": 26,
+ "usd_at_list_price": 3.3316679600000005e-05, "usd_after_free_tier": 0.0}
 ```
 
-**Accuracy:** do not read it as an accurate bill yet.
+The 0.388 GB-s is the workers' 0.263 plus a flat 0.125 for the submit. At list price the job would cost about $0.00003; inside the free tier it costs nothing.
 
-- For that job, the worker part of the estimate was 0.856× the billed worker GB-s (5.305 against 6.200).
-- With every worker warm (job `a8ac980912434d829ef4cddb0edd0399`) it was **0.17×** (0.046 against 0.271 GB-s).
-- The cause: the estimate times each shard only up to the result write. The work after it is billed but not recorded: the put itself, the done-set update, EMF, and the finalize on the last shard. That is about 15–45 ms per warm call.
-- *TBD: WS0 and James are deciding the fix.* The arithmetic in this note uses the measured durations, not `cost_estimate`.
+**Accuracy, checked against billed duration** (WS4, `main` `581563d`, about 18:10Z, docs/TEST_RESULTS.md, acceptance ±15% of the Lambda REPORT lines):
+
+| Job | Workers | Estimate (worker GB-s) | Billed (worker GB-s) | Ratio |
+| --- | --- | --- | --- | --- |
+| `42dccdcc800d4d2e800ccc0c36cf353a` | 5 fresh after an apply, 5 warm | 5.34 | 6.021 | **0.887×** |
+| `99d738cb3c864dbebc4680adcff33b24` | all 10 warm | 0.263 | 0.259 | **1.015×** |
+
+- Before the fix, the all-warm case read **0.17×** (job `a8ac980912434d829ef4cddb0edd0399`). Each shard timed itself only up to its result write. The work after it was billed but not recorded: the put itself, the done-set update, EMF, and the finalize on the last shard.
+- The fix adds a calibrated `WORKER_OVERHEAD_MS = 22` per shard (`src/qmc_core/cost.py`), chosen by James. It was calibrated on `a8ac9809…`, so it was validated only on the two fresh jobs above.
+- The mixed job still reads 11% low. Cold invocations' post-put work bills more than the 22 ms calibrated on warm ones.
+- The submit's flat 0.125 GB-s is not validated: billed submits were 0.096 GB-s (warm) and 0.232 GB-s (cold).
+- The free-tier arithmetic above uses measured durations, not `cost_estimate`.
 
 ## Optional features (contract changes 007 and 008)
 
-- **Step Functions watcher: off by default, so $0.** In `dev`, `ListStateMachines` returns none (after the apply of `main` `581563d`). Switched on, each job uses about 4–7 state transitions (contract change 007): a job finishes inside the first 10 s wait, so a typical run is Wait → GetJob → Check → Succeed, and Step Functions bills retries as extra transitions. Standard workflows get **4,000 transitions a month, always free**, then **$0.000025 each** in us-east-2 (Price List API `GetProducts`, `AmazonStates`, usage type `USE2-StateTransition`; [Step Functions pricing](https://aws.amazon.com/step-functions/pricing/)). That covers about 570–1,000 jobs a month (4,000 ÷ 7 to 4,000 ÷ 4). At 3,300 jobs a month it would be 13,200–23,100 transitions, **≈ $0.23–$0.48 a month**, which is why it stays off.
-- **PENDING_ENTROPY: no new resource.** A queued submit costs at most 4 extra API invocations (the seeder's attempts, each waiting 2, 4, 6 or 6 s first) and a few DynamoDB writes inside the provisioned 10/10. No queue, mapping, metric or alarm is added. The seeder calls Qrypt the same way a submit does, so it spends the same 1 KiB per success.
+- **Step Functions watcher: off by default, so $0.** In `dev`, `ListStateMachines` returns none (after the apply of `main` `581563d`). WS4's drill switched it on, then off again (`ListStateMachines` empty afterwards, 19:30Z). Switched on, each job uses about 4–7 state transitions (contract change 007): a job finishes inside the first 10 s wait, so a typical run is Wait → GetJob → Check → Succeed, and Step Functions bills retries as extra transitions. Standard workflows get **4,000 transitions a month, always free**, then **$0.000025 each** in us-east-2 (Price List API `GetProducts`, `AmazonStates`, usage type `USE2-StateTransition`; [Step Functions pricing](https://aws.amazon.com/step-functions/pricing/)). That covers about 570–1,000 jobs a month (4,000 ÷ 7 to 4,000 ÷ 4). At 3,300 jobs a month it would be 13,200–23,100 transitions, **≈ $0.23–$0.48 a month**, which is why it stays off.
+- **PENDING_ENTROPY: no new resource.** A queued submit costs a few extra API invocations, bounded by 4 attempts, at most 15 slot-wait hops per attempt and the 120 s pending limit, and a few DynamoDB writes inside the provisioned 10/10. In the 10-job burst drill every job completed, with 10 Qrypt calls in total (docs/TEST_RESULTS.md). No queue, mapping, metric or alarm is added. The seeder calls Qrypt the same way a submit does, so it spends the same 1 KiB per success.
 
 ## At rest
 
