@@ -39,8 +39,9 @@ def test_antithetic_one_million_paths_within_3se():
 
 
 # Generated 2026-10-13 with `make test-golden` (Lambda image, amd64 under Rosetta, exp → X86_V3,
-# NumPy 2.5.4); native arm64 gives the same bits. To be confirmed by CI's golden job on native x86
-# and by the deployed antithetic job's shard cross-check. Never regenerate without James.
+# NumPy 2.5.4). Confirmed on native x86_64 (GitHub Actions run 38429804576, ubuntu-24.04), on
+# native arm64, and against real Lambda antithetic shards (tools/shard_crosscheck.py, job
+# 166f446d, 10/10). Never regenerate without James.
 GOLDEN_ANTITHETIC_SUM_HEX: str | None = "0x1.fdeed45885d08p+18"
 GOLDEN_ANTITHETIC_SUM_SQ_HEX: str | None = "0x1.efe11fda40dc7p+22"
 
