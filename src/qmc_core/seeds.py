@@ -25,7 +25,7 @@ BITGEN = "PCG64DXSM"
 _STATUS_CODES = {
     400: ErrorCode.QRYPT_BAD_REQUEST,
     401: ErrorCode.QRYPT_AUTH_FAILED,
-    403: ErrorCode.QRYPT_QUOTA_EXHAUSTED,
+    403: ErrorCode.QRYPT_FORBIDDEN,
     429: ErrorCode.QRYPT_RATE_LIMITED,
     503: ErrorCode.QRYPT_ENTROPY_UNAVAILABLE,
 }
@@ -58,7 +58,7 @@ def parse_qrypt_response(status: int, body: bytes) -> bytes:
     """Map a Qrypt HTTP response to the decoded 1,024-byte block.
 
     Raises ``EntropyError`` with the §5.3 code: 400 → QRYPT_BAD_REQUEST, 401 →
-    QRYPT_AUTH_FAILED, 403 → QRYPT_QUOTA_EXHAUSTED, 429 → QRYPT_RATE_LIMITED, 503 →
+    QRYPT_AUTH_FAILED, 403 → QRYPT_FORBIDDEN, 429 → QRYPT_RATE_LIMITED, 503 →
     QRYPT_ENTROPY_UNAVAILABLE, other 5xx → QRYPT_SERVER_ERROR; a 200 that is not JSON, lacks
     ``random`` as a list of exactly one string, has invalid base64, ≠ 1,024 bytes, an
     all-zero block or a present ``size`` other than 1 → QRYPT_BAD_RESPONSE.

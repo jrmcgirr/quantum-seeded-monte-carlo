@@ -12,7 +12,7 @@ from tests.api.conftest import REF
 QRYPT_FAILURES = [
     (ErrorCode.QRYPT_BAD_REQUEST, 500),
     (ErrorCode.QRYPT_AUTH_FAILED, 503),
-    (ErrorCode.QRYPT_QUOTA_EXHAUSTED, 503),
+    (ErrorCode.QRYPT_FORBIDDEN, 503),
     (ErrorCode.QRYPT_RATE_LIMITED, 503),
     (ErrorCode.QRYPT_SERVER_ERROR, 503),
     (ErrorCode.QRYPT_ENTROPY_UNAVAILABLE, 503),

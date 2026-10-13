@@ -29,7 +29,7 @@ You are building the API router Lambda behind the Function URL: job submission (
 - **Fail closed, write nothing.** On any secret or Qrypt failure: no job item, no JOBLIST item, no entropy item, no SQS message. Only the limiter slot is consumed. Emit `SeedingFailures` with the cause.
 - **Order matters:** the limiter slot comes before the Qrypt call, and a retry takes a new slot. The cap is 15 per 10 s window, not 30 (two adjacent windows can both fill).
 - Never log the token, the `Authorization` header, request headers in general, or the raw entropy block. Log `raw_sha256` only.
-- Qrypt error mapping is exact (HANDOFF §5.3). A 403 is `QRYPT_QUOTA_EXHAUSTED`, not a generic failure: operators need to know the monthly allotment is gone.
+- Qrypt error mapping is exact (HANDOFF §5.3). A 403 is `QRYPT_FORBIDDEN` (bad token **or** quota used up: Qrypt sends the same response for both, contract change 003), not a generic failure: operators need to know the monthly allotment is gone.
 - The overall Qrypt deadline is one budget for connect + TLS + request + read + any retry. `urllib`/`http.client` timeouts are per socket operation, so compute each from the time left.
 - Lambda `GET` writes (lazy finalize, reaper) are conditional on `status = QUEUED`; a second `GET` must write nothing.
 - `GET /jobs` must never Scan. A fresh deployment returns `{"jobs": []}` with 200.

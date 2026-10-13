@@ -81,7 +81,7 @@ def test_parse_ok():
     [
         (400, ErrorCode.QRYPT_BAD_REQUEST),
         (401, ErrorCode.QRYPT_AUTH_FAILED),
-        (403, ErrorCode.QRYPT_QUOTA_EXHAUSTED),
+        (403, ErrorCode.QRYPT_FORBIDDEN),
         (429, ErrorCode.QRYPT_RATE_LIMITED),
         (500, ErrorCode.QRYPT_SERVER_ERROR),
         (502, ErrorCode.QRYPT_SERVER_ERROR),

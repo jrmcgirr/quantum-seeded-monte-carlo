@@ -1,6 +1,6 @@
 # Quantum-Seeded Monte Carlo — Handoff
 
-Version 1.8, 2026-10-13 (D19: GitHub is a plain remote pushed at gates, not a mirror; GitLab CI on James's runner). 1.7, 2026-10-13 (contract change 002: reserved-concurrency threshold 110). 1.6, 2026-10-13 (G1 live: `kms:Decrypt` not needed). 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
+Version 1.9, 2026-10-13 (contract change 003: Qrypt 403 → `QRYPT_FORBIDDEN`; fail-closed drill expects it). 1.8, 2026-10-13 (D19: GitHub is a plain remote pushed at gates, not a mirror; GitLab CI on James's runner). 1.7, 2026-10-13 (contract change 002: reserved-concurrency threshold 110). 1.6, 2026-10-13 (G1 live: `kms:Decrypt` not needed). 1.5, 2026-10-13 (first apply: runtime management resource, grader policy inline on the user (SCP), `botocore[crt]`). 1.4, 2026-10-13 (G0 contract frozen: §12 pins and the NumPy 2.5 SIMD finding, §4.1 additions). 1.3, 2026-10-13 (G0a interfaces: §4.1 seams, `qrypt_call` log event, shared test fixtures). 1.2, 2026-10-13 (contract change 001: Region us-east-2). 1.1, 2026-10-12 (after an independent review: apply discipline from `main`, G0 split, enforcement flag for the SIMD self-check, snapshot-conditioned PARTIAL writes, stdout EMF, mirror token scope, DLQ metric lag, reserved words, empty-sample guards). Owner: James McGirr. This file is the single source of truth for every coding agent on the project. Read it fully before writing code.
 
 Where this file disagrees with `docs/ASSIGNMENT.md`, **this file wins**; section 3 records how each conflict was resolved. The product view (who, why, success metrics) is in `docs/PRD.md`; the plan, gates and tickets are in `docs/ROADMAP.md`; the research behind every decision is in `docs/PRIMER.md`; the reasoning for each decision is in `docs/DECISIONS.md`.
 
@@ -241,8 +241,8 @@ Body: `{"error": {"code": "<CODE>", "message": "<one sentence for a human>", "de
 | 405 | `METHOD_NOT_ALLOWED` | |
 | 409 | `JOB_NOT_REPLAYABLE` | Replay of a job that is not `COMPLETE` |
 | 429 | `ENTROPY_RATE_LIMITED` | Our limiter's window is full; `Retry-After` = seconds to the next window |
-| 503 | `QRYPT_AUTH_FAILED` | Qrypt 401 (token invalid or expired) |
-| 503 | `QRYPT_QUOTA_EXHAUSTED` | Qrypt 403 (allotment used up) |
+| 503 | `QRYPT_AUTH_FAILED` | Qrypt 401 (no or malformed `Authorization` header; Qrypt answers a present-but-wrong token with 403) |
+| 503 | `QRYPT_FORBIDDEN` | Qrypt 403 `{"error": "Forbidden or entropy quota reached"}`: the token is invalid or expired, **or** the monthly allotment is used up. Qrypt sends the same status and body for both, so the message names both causes (contract change 003) |
 | 503 | `QRYPT_RATE_LIMITED` | Qrypt 429 after the one allowed retry; `Retry-After: 10` |
 | 503 | `QRYPT_SERVER_ERROR` | Qrypt 500 or another 5xx |
 | 503 | `QRYPT_ENTROPY_UNAVAILABLE` | Qrypt 503 |
@@ -591,7 +591,7 @@ The free-tier arithmetic for 100 jobs/day of 1M paths (PRIMER, "The free tier is
 | Core 4: within 3 SE at 1M paths | `tests/correctness/test_closed_form.py` (frozen seed, committed) + `make e2e` on Lambda | G1 |
 | Core 5: bit-identical replay | `tests/correctness/test_golden.py` in the Lambda image (CI) + `make e2e` + `make replay-check N=20` (`tools/replay_many.py`) | G1, G3 |
 | Core 6: forced failure trips the DLQ alarm and notifies | `make warm-dlq` ≥ 15 min before, then `make force-failure` (`tools/force_failure.py`): job with `fail_shards=[3]` → PARTIAL with `[3]`, DLQ depth 1, alarm ALARM (poll up to 20 min), email received (screenshot) | G2 |
-| Fail-closed seeding | Unit: every §5.3 Qrypt code via `FakeEntropySource` → right error, zero DynamoDB/SQS writes. Deployed: the integrator applies `EXTRA_VARS='-var qrypt_api_key_param_name=/qmc/qrypt-api-key-invalid'` (a decoy SecureString with a bad token, created by CLI) → WS4 asserts 503 `QRYPT_AUTH_FAILED`, no job, `SeedingFailures` alarm → the integrator re-applies normally and deletes the decoy. Only 401 is demonstrated live; 403/429/500/503/timeout are unit-tested (TEST_RESULTS says so) | G2 |
+| Fail-closed seeding | Unit: every §5.3 Qrypt code via `FakeEntropySource` → right error, zero DynamoDB/SQS writes. Deployed: the integrator applies `EXTRA_VARS='-var qrypt_api_key_param_name=/qmc/qrypt-api-key-invalid'` (a decoy SecureString with a bad token, created by CLI) → WS4 asserts 503 `QRYPT_FORBIDDEN` (Qrypt answers a wrong token with 403, contract change 003), no job, `SeedingFailures` alarm → the integrator re-applies normally and deletes the decoy. Only 403 is demonstrated live; 401/429/500/503/timeout are unit-tested (TEST_RESULTS says so) | G2 |
 | Duplicate SQS delivery | Integration: deliver each shard message twice and in a crash-between-writes order → same result, `n` unchanged. Deployed: re-send a shard message with `aws sqs send-message` after COMPLETE → job unchanged | G2 |
 | Worker failure → PARTIAL | As core 6, plus reaper test with a shard message deleted by hand (moto) | G2 |
 | Lambda timeout bound | Validation test for the ratio; worker duration at 1M paths/shard measured ≪ 10 s | G2 |
@@ -639,7 +639,7 @@ The free-tier arithmetic for 100 jobs/day of 1M paths (PRIMER, "The free tier is
 | # | Risk | Mitigation |
 | --- | --- | --- |
 | R1 | Qrypt self-registration closed or token delayed | Day 0 step 0.3; build against `FakeEntropySource`; email support |
-| R2 | Qrypt monthly quota unknown; a 403 stops all submits until the reset | `size=1` always; the burst test uses 40 KiB at most; `SeedingFailures` alarm; keep total live usage far below 10 MB (≈ 200 KiB expected) |
+| R2 | Qrypt monthly quota unknown; a 403 (`QRYPT_FORBIDDEN`, indistinguishable from a bad token) stops all submits until the reset | `size=1` always; the burst test uses 40 KiB at most; `SeedingFailures` alarm; keep total live usage far below 10 MB (≈ 200 KiB expected) |
 | R3 | Qrypt latency vs the 800 ms p95 | Measure from Lambda at G1 (`QryptLatencyMs`); keep-alive connection; NumPy-free API zip; if p95 is over budget, document it with the numbers (a pre-fetched entropy pool is the fallback, not planned) |
 | R4 | x86 Lambda hosts with AVX-512 change `exp` by 1 ULP and break replay | D2: pinned dispatch, fail-closed self-check, fingerprint, replay ×20 (QMC-146) |
 | R5 | `NPY_DISABLE_CPU_FEATURES` names differ by NumPy version | WS0 checks them with `np.show_runtime()` in the Lambda image at G0 |

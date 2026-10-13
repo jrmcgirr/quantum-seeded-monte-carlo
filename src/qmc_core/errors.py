@@ -19,7 +19,13 @@ class ErrorCode(Enum):
     JOB_NOT_REPLAYABLE = (409, "Only a COMPLETE job can be replayed.")
     ENTROPY_RATE_LIMITED = (429, "The entropy rate limit is reached; retry after the window.")
     QRYPT_AUTH_FAILED = (503, "Qrypt rejected the token (401): invalid or expired.")
-    QRYPT_QUOTA_EXHAUSTED = (503, "Qrypt entropy quota exhausted (403).")
+    # Qrypt sends the same 403 {"error": "Forbidden or entropy quota reached"} for a rejected token and an
+    # exhausted quota, so the two cannot be told apart (contract change 003).
+    QRYPT_FORBIDDEN = (
+        503,
+        "Qrypt refused the request (403): the token is invalid or expired, "
+        "or the entropy quota is used up.",
+    )
     QRYPT_RATE_LIMITED = (503, "Qrypt rate limit hit (429).")
     QRYPT_SERVER_ERROR = (503, "Qrypt server error (5xx).")
     QRYPT_ENTROPY_UNAVAILABLE = (503, "Qrypt entropy unavailable (503).")
