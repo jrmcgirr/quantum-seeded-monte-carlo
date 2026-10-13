@@ -15,7 +15,7 @@ All times US Central. Build Tue 2026-10-13 and Wed 2026-10-14; due Wed; 9:00–1
 
 | Gate | When | Focus | Workstreams active |
 | --- | --- | --- | --- |
-| Day 0 | Mon night → Tue 9:00 AM | AWS account, quota request, Qrypt token, SSM parameter, tools, GitHub mirror, bootstrap (QMC-090) | James |
+| Day 0 | Mon night → Tue 9:00 AM | AWS account, quota request, Qrypt token, SSM parameter, tools, GitHub repo (D19: plain remote), bootstrap (QMC-090) | James |
 | G0a Interfaces on `main` | Tue 9:45 AM | Skeleton, final Makefile, `qmc_core` interface stubs, provisional NumPy pin | WS0; **WS1 starts Terraform at 9:00 AM**; WS5 skeletons |
 | G0 Contract frozen | Tue 12:00 PM | `qmc_core` implementations and tests, CI green | WS0; WS1 Terraform; WS2, WS3, WS4 code against the interfaces from G0a |
 | G1 Deployed end to end | Tue 6:00 PM | NumPy/SIMD pin by 2 PM (QMC-099); first apply; API and worker handlers; 1M-path job COMPLETE within 3 SE; bit-identical replay on Lambda | WS1 finishes apply; WS2 and WS3 lead; WS4 correctness tests, integration tests, `make e2e` |
