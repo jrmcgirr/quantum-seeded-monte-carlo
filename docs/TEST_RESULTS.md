@@ -16,7 +16,7 @@ Evidence for every row of HANDOFF §11. Each entry names the command, the commit
 | Duplicate SQS delivery | `test_every_message_delivered_twice`, `test_crash_between_shard_put_and_mark_done`; `make force-failure ARGS=--duplicate` | integration PASS; deployed PASS (f40a083, `duplicate_delivery` logged, result and n unchanged) |
 | Worker failure → PARTIAL | `test_forced_failure_ends_partial`, `test_reaper_marks_missing_shard_partial_and_partial_is_final`; `make force-failure` | integration PASS; deployed PASS (f40a083) |
 | Lambda timeout bound | `tests/deployed` paths-per-shard 400; worker shard duration | PASS: paths-per-shard 400; 100k-path shard 3–5 ms vs the 10 s timeout |
-| Burst vs 30 req/10 s | `make burst` | **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
+| Burst vs 30 req/10 s | `make burst` | **006 (e77a626): PASS 11/11**: 1 × 202, 39 × 429 with Retry-After 1–2, no Qrypt 429, LAST item matches; steady spot check: 5 calls 2.49–3.03 s apart, all 200. Earlier, under 005: **PASS under HANDOFF 1.12 §11 (James's decision, R24)** (6dcb3c2): 1 × 202, 38 × 429 (Retry-After 1), 1 × 503 QRYPT_RATE_LIMITED (Qrypt 429 on a boundary-crossing call, failed closed, nothing written); max 2 Qrypt calls per 10 s. Cap 10 re-run (f3873f8): our limit held (10 slots, ≤ 10 calls/10 s), but **Qrypt answered 9 of 10 with 429**, so 1 × 202, 30 × 429, 9 × 503 QRYPT_RATE_LIMITED (finding below). Earlier PASS (d0af0b1): 40 concurrent → 15 × 202, 25 × 429 with Retry-After; 15 limiter slots in the window; max 15 Qrypt calls in any rolling 10 s; SampleCount = log lines |
 | Cost runaway | `tests/deployed` MAX_PATHS 400 | PASS (deployed, c768aea) |
 | Invalid inputs | `tests/api/test_validation.py` (WS2); `tests/deployed/test_edge_cases.py` | PASS (deployed, c768aea) |
 | Clean teardown, no drift | `make drift-check` (integrator) | **pending** |
@@ -206,6 +206,49 @@ distinct worker execution environments (log streams): 17
 ```
 
 Both CPU strings belong to hosts that **report no AVX-512** (fingerprint `avx512f: false`), with `exp_target` X86_V3 and `dispatch_enforced: true`. This run therefore shows bit-identity across 17 execution environments and two reported CPU model strings, but it **did not reach an AVX-512 host** (risk R4). On such a host, I5 rests on `NPY_DISABLE_CPU_FEATURES` pinning `exp` to X86_V3 and on the fail-closed self-check, not on this run.
+
+## Burst and steady check under contract change 006 (2 s minimum gap), build_sha e77a626, 2026-10-13
+
+### Burst, 13:35:56Z
+`AWS_PROFILE=qmc make burst` (gap 2,000 ms). Qrypt: 1 KiB.
+
+```
+40 submits in 3.11 s: {429: 39, 202: 1} {'ENTROPY_RATE_LIMITED': 39}
+PASS  only 202, 429 ENTROPY_RATE_LIMITED or 503 QRYPT_RATE_LIMITED  {'ENTROPY_RATE_LIMITED': 39}
+PASS  every 429 has Retry-After  {'1': 14, '2': 25}
+PASS  qrypt_call lines ≥ submits that reached Qrypt  1 calls, 1 submits reached Qrypt (1 accepted)
+PASS  Qrypt calls ≥ 2 s apart (start to start, −0.25 s tolerance)  1 calls; gaps []
+PASS  ≤ 5 Qrypt calls in any rolling 10 s  max 1
+PASS  ≤ 30 Qrypt calls in any rolling 10 s (assignment)  max 1
+PASS  RL#qrypt/LAST at_ms = last call's slot (within 1 s before its start)  at_ms 1791898558.169 vs last start 1791898558.2310002
+PASS  no Qrypt 429 (expected under 006)  {200: 1}
+PASS  every Qrypt 429 → one 503 QRYPT_RATE_LIMITED submit  0 seeding_failed QRYPT_RATE_LIMITED, 0 HTTP 503
+PASS  nothing written for those submits (job, JOBLIST, entropy)  job items 0, JOBLIST 0, entropy 0
+PASS  QryptLatencyMs SampleCount = qrypt_call lines (same minutes)  1 vs 1 (after 0 s)
+```
+
+All 40 submits landed within about 1 s, inside one 2 s gap, so exactly one reached Qrypt. The spacing check is therefore trivially true here; the steady check below exercises it.
+
+### Steady spot check, 13:36:48Z
+`AWS_PROFILE=qmc make bench ARGS="--submits 3 --runs 0 --days 0.01"` (3 warm-ups + 3 measured, paced 2.5 s): 3/3 accepted, client p50 286 ms, Lambda Duration p50 142 ms. Then the 006 checks on the same calls:
+
+```
+$ AWS_PROFILE=qmc uv run python tools/burst.py --recheck 13:36:48Z 13:37:12Z
+recheck 13:36:48Z–13:37:12Z: 5 qrypt_call lines
+PASS  Qrypt calls ≥ 2 s apart (start to start, −0.25 s tolerance)  5 calls; gaps [3.028, 2.505, 2.521, 2.492]
+PASS  ≤ 5 Qrypt calls in any rolling 10 s  max 4
+PASS  ≤ 30 Qrypt calls in any rolling 10 s (assignment)  max 4
+PASS  RL#qrypt/LAST at_ms = last call's slot (within 1 s before its start)  at_ms 1791898621.785 vs last start 1791898621.7910001
+PASS  no Qrypt 429 (expected under 006)  {200: 5}
+PASS  every Qrypt 429 → one 503 QRYPT_RATE_LIMITED submit  0 seeding_failed QRYPT_RATE_LIMITED
+PASS  nothing written for those submits (job, JOBLIST, entropy)  job items 0, JOBLIST 0, entropy 0
+7/7 passed
+```
+
+- Only 5 of the 6 submits reached Qrypt. Warm-up 2 (request `bec23805`, 13:36:51.776Z) arrived about 0.5 s after warm-up 1, so the limiter rejected it in 10.9 ms: 429 `ENTROPY_RATE_LIMITED`, no Qrypt call. That is the gap working.
+- It arrived early because of a bench bug: the first request resolved the URL through `make outputs` inside the timed loop, which used up the pacing. Fixed in 4371068 (the URL is resolved before timing).
+- The bug affected warm-ups only. The 50-submit bench's measured submits were paced correctly (median gap 1.501 s).
+- Qrypt: 5 KiB.
 
 ## Burst at 1 s window, cap 1 (contract change 005), build_sha 6dcb3c2, 2026-10-13 13:13:37Z
 
@@ -412,4 +455,5 @@ WS2 ran the checks at 11:17 CT (commands and outputs in `docs/ai-log/WS2.md` on 
 | burst at cap 10 (12:55 UTC; 1 × 200, 9 × Qrypt 429) | 1 |
 | burst at 1 s cap 1 (13:13 UTC; 1 × 200, 1 × Qrypt 429) | 1 |
 | make bench (13:20 UTC; 58 submits, 56 × 200) | 56 |
-| **Total** | **81** |
+| 006 burst + steady spot check (13:35–13:37 UTC) | 1 + 5 |
+| **Total** | **87** |
