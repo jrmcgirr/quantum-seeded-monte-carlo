@@ -65,6 +65,14 @@ data "aws_iam_policy_document" "api" {
     resources = [var.qrypt_param_arn]
   }
 
+  # PENDING_ENTROPY seeder (contract change 008): the API invokes itself asynchronously, bounded by
+  # PENDING_MAX_ATTEMPTS in code and by the event-invoke config below.
+  statement {
+    sid       = "SelfInvoke"
+    actions   = ["lambda:InvokeFunction"]
+    resources = [local.function_arn]
+  }
+
   statement {
     sid       = "Logs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
@@ -112,6 +120,10 @@ resource "aws_lambda_function" "api" {
       MAX_SHARDS              = tostring(var.max_shards)
       MAX_PATHS_PER_SHARD     = tostring(var.max_paths_per_shard)
       JOB_DEADLINE_S          = tostring(var.job_deadline_s)
+      PENDING_MAX_ATTEMPTS    = "4"
+      PENDING_BACKOFF_MS      = "2000,4000,8000"
+      PENDING_MAX_AGE_S       = "120"
+      MAX_PENDING_ENTROPY     = "10"
       JOB_TTL_DAYS            = "365"
       WORKER_MEMORY_MB        = tostring(var.worker_memory_mb)
       FAULT_INJECTION_ENABLED = tostring(var.enable_fault_injection)
@@ -120,6 +132,14 @@ resource "aws_lambda_function" "api" {
   }
 
   depends_on = [aws_cloudwatch_log_group.api, aws_iam_role_policy.api]
+}
+
+# Async self-invokes (PENDING_ENTROPY, contract change 008) are never retried by Lambda (the seeder re-invokes
+# itself with attempt + 1) and are dropped after 300 s; GET on a job past pending_until is the backstop.
+resource "aws_lambda_function_event_invoke_config" "api" {
+  function_name                = aws_lambda_function.api.function_name
+  maximum_retry_attempts       = 0
+  maximum_event_age_in_seconds = 300
 }
 
 resource "aws_lambda_function_url" "api" {
