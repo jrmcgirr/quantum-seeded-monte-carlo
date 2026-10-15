@@ -21,12 +21,12 @@ Expected durations come from the G1–G3 drills (docs/TEST_RESULTS.md, docs/BENC
 | # | Segment | Command | Expect | Target on video |
 | --- | --- | --- | --- | --- |
 | 0 | Title: what it does | README top, architecture diagram | — | 0:15 |
-| 1 | `terraform apply` from empty, sped up | `make build && make apply` | About 65 s and 33 resources (drift check, 15:33Z). End on the outputs (`api_url`) | 0:40 |
+| 1 | `terraform apply` from empty, sped up | `make build && make apply` | About 110 s and 37 resources, with the watcher and grader user on (fresh-clone rehearsal, 2026-10-15). End on the outputs (`api_url`) | 0:40 |
 | 1b | SNS confirmation | Click "Confirm subscription" in the email | "Subscription confirmed!" | 0:10 |
 | 2 | A 1M-path job running to COMPLETE | `uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10`, then `… wait <job_id>` | 202 with `master_seed_hex`; COMPLETE in about 1–3 s from submit. `wait` may see COMPLETE on its first poll | 0:40 |
 | 3 | The Black-Scholes comparison | `uv run python clients/qmc.py get <job_id>` | `result.estimate`, `std_error`, `ci95`; `reference.black_scholes` 10.450583572185565, `z_score`, `within_3se: true`; `seed_provenance` (Qrypt, `raw_sha256`) | 0:35 |
 | 4 | A bit-identical replay | `… replay <job_id>`, then `… wait <replay_id>` | `replay_check.bit_identical: true`, `shards_compared: 10`, `shard_diffs: []`, `fingerprint_match: true` | 0:35 |
-| 5 | Forced failure → PARTIAL → DLQ → alarm → email | `make force-failure` (needs `enable_fault_injection = true`) | PARTIAL with `failed_shards: [3]` at about +13 s; DLQ depth 1 at about +23 s; `qmc-dev-dlq-depth` ALARM at about +4 min (237 s in the G1 drill); the "ALARM: qmc-dev-dlq-depth" email | 1:10 |
+| 5 | Forced failure → PARTIAL → DLQ → alarm → email | `make force-failure` (needs `enable_fault_injection = true`) | PARTIAL with `failed_shards: [3]` at about +13 s; DLQ depth 1 at about +23 s; `qmc-dev-dlq-depth` ALARM at about +4 min (237 s in the G1 drill), shown live on the CloudWatch alarms page; then the email as the saved screenshot `docs/images/dlq-alarm-email.png` (the G1 drill's alarm at 2026-10-13 11:48:08 UTC), not a live inbox (James, 2026-10-15) | 1:10 |
 | 6 | Close: guardrails | The `qmc-dev` dashboard and the Budget page ($0.00 of $1.00) | — | 0:25 |
 | | **Total** | | | **4:10**, leaving 50 s spare |
 
@@ -38,12 +38,12 @@ Expected durations come from the G1–G3 drills (docs/TEST_RESULTS.md, docs/BENC
 2. "A one-million-path job, split into ten shards. The API took 1 KiB of entropy from Qrypt and derived the master seed. The workers finish in about a second."
 3. "The result has the estimate, its standard error and 95% interval, next to the closed-form Black-Scholes price. The z-score is within three standard errors. The seed's provenance records which Qrypt block it came from, by hash."
 4. "A replay reruns the job from its stored seed without calling Qrypt. It compares every shard's sums byte for byte: bit-identical, and the runtime fingerprints match."
-5. "Now a forced failure: shard 3 is told to fail. The job ends PARTIAL, naming shard 3, and keeps a partial result from the other nine. After three attempts the message goes to the dead-letter queue, the alarm fires, and here is the email." *(Cut the wait for the alarm.)*
+5. "Now a forced failure: shard 3 is told to fail. The job ends PARTIAL, naming shard 3, and keeps a partial result from the other nine. After three attempts the message goes to the dead-letter queue, the alarm fires. This is the email the same alarm sent in an earlier drill." *(Cut the wait for the alarm; show the alarm page live, then the screenshot.)*
 6. "The guardrails: seven alarms, eight custom metrics on this dashboard, and a $1 Budget that alerts at the first cent. The bill so far is zero."
 
 ## Before recording
 
-- [ ] No Qrypt token, access key or secret on screen. Do not open `~/.qmc/dev.tfvars` on camera: it holds the alert email address. Blur the inbox address in segment 5
+- [ ] No Qrypt token, access key or secret on screen. Do not open `~/.qmc/dev.tfvars` on camera: it holds the alert email address. Do not open the inbox: segment 5 uses the saved email screenshot
 - [ ] Recording from the fresh clone, on `main`, with `git log -1` matching GitHub's `main`
 - [ ] SNS subscription Confirmed (step 3)
 - [ ] `make warm-dlq` at least 15 minutes before segment 5, and `qmc-dev-dlq-depth` is OK

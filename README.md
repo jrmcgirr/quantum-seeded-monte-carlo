@@ -33,7 +33,7 @@ Every AWS resource, the submit and replay sequences, and the fail-closed branch:
 
 ## Grader quick-start
 
-*TBD (QMC-151, after G1): every command below is run from a clean clone during the rehearsal (QMC-157) before it is final.*
+Rehearsed from a fresh clone of GitHub `main` on 2026-10-15 (QMC-157): `make destroy` at `bc0637c` (34 destroyed, then the step 7 checks all `[]`), then `make build && make apply` from empty at `a5b9ec0`: 37 resources in 110 s, with the watcher and the grader user on, followed by a plan with no changes. Every command ran as written; the rehearsal only added `-auto-approve` because it ran unattended.
 
 ### Prerequisites
 
@@ -82,7 +82,7 @@ mkdir -p ~/.qmc && cp infra/terraform.tfvars.example ~/.qmc/dev.tfvars && chmod 
 | `enable_fault_injection` | `false` | Accepts `fault_injection.fail_shards`, for the forced-failure demo |
 | `worker_reserved_concurrency` | `null` | Hard cap on concurrent workers; see below |
 | `create_budget` | `true` | The account-wide $1 Budget; only one environment per account should create it |
-| `enable_step_functions` | `false` | The optional watcher (contract change 007) |
+| `enable_step_functions` | `false` | The optional watcher (contract change 007); on in our deployed stack |
 | `region` | `us-east-2` | See Prerequisites |
 
 The file holds no secrets: the Qrypt token is only in SSM.
@@ -99,6 +99,8 @@ If it is **110 or more**, set `worker_reserved_concurrency = 10`. AWS keeps 100 
 make setup
 make build && make apply      # make apply runs make build
 ```
+
+Run it from an up-to-date clone of `main`: `make apply` and `make destroy` refuse a checkout that does not contain `origin/main` (D33). If `main` moved since you cloned, `git pull` first.
 
 Confirm the SNS subscription email straight away: alarm emails are dropped until it is confirmed.
 
@@ -123,17 +125,20 @@ Submits are spaced at least 2 s apart by our Qrypt limiter. A second submit with
 
 ### 5. Read the result and the Black-Scholes comparison
 
-Example from the first live run (G1, 2026-10-13, job `5358ec35…`, `docs/ai-log/WS2.md`):
+Annotated output from the rehearsal (2026-10-15 16:11Z, `build_sha` `a5b9ec0`, job `0aaa055f…`). `wait` saw QUEUED at 0.5 s and COMPLETE at 3.0 s; `created_at` to `completed_at` was 3.3 s.
 
 | Field | Value | Meaning |
 | --- | --- | --- |
-| `result.estimate` | 10.476167161519855 (`0x1.4f3cc2ea45059p+3`) | Monte Carlo price; the hex form is what replay compares |
-| `result.std_error` | 0.014748685456949651 | Standard error over 1,000,000 paths |
-| `result.ci95` | [10.447260269204925, 10.505074053834786] | 95% confidence interval |
+| `master_seed_hex` | `7fcb63e3…7c65` | 256-bit master seed derived from the Qrypt block (HKDF-SHA256) |
+| `seed_provenance` | `source: qrypt`, `http_status: 200`, `block_bytes: 1024`, `latency_ms: 359`, `raw_sha256: 5bd442b8…` | Which Qrypt block seeded the job, by hash |
+| `result.estimate` | 10.431587435386609 (`0x1.4dcf90740b333p+3`) | Monte Carlo price; the hex form is what replay compares |
+| `result.std_error` | 0.014708138756574906 | Standard error over 1,000,000 paths |
+| `result.ci95` | [10.402760013144105, 10.460414857629113] | 95% confidence interval; it contains the Black-Scholes price |
 | `reference.black_scholes` | 10.450583572185565 | Closed-form price |
-| `reference.z_score`, `within_3se` | 1.735, `true` | Distance from Black-Scholes in standard errors |
-
-*TBD: replace with the annotated output of the rehearsal run.*
+| `reference.z_score`, `within_3se` | −1.29, `true` | Distance from Black-Scholes in standard errors |
+| `progress`, `failed_shards` | 10/10 done, `[]` | Every shard counted once, none failed |
+| `fingerprint` | x86_64, NumPy 2.5.4, `exp_target` X86_V3, `dispatch_enforced: true`, PCG64DXSM, chunk 131072 | The runtime that replay must match |
+| `cost_estimate` | 6.091 GB-s, 11 Lambda requests, 21 SQS requests, 26 write units; $0.000128 at list price, **$0.0 after the free tier** | Includes this first job's cold starts; a warm replay was 0.388 GB-s |
 
 ### 6. Replay it
 
@@ -141,6 +146,8 @@ Example from the first live run (G1, 2026-10-13, job `5358ec35…`, `docs/ai-log
 uv run python clients/qmc.py replay <job_id>
 uv run python clients/qmc.py wait <replay_job_id>    # replay_check.bit_identical: true
 ```
+
+At the rehearsal, replay `9dbf6846…` of `0aaa055f…` reused the stored seed (`seed_provenance.source: replay`, no Qrypt call) and was COMPLETE in 3.0 s, with `replay_check`: `bit_identical: true`, `estimate_equal: true`, `shards_compared: 10`, `shard_diffs: []`, `fingerprint_match: true`.
 
 ### 7. Tear down
 
@@ -168,7 +175,7 @@ Terraform creates every log group itself, with 14-day retention, so destroy remo
 
 ## Calling our deployed endpoint
 
-*TBD (QMC-158): endpoint URL, which is kept up through grading and then destroyed, and the deployed `build_sha` as reported by `GET /health` at the rehearsal.*
+**Endpoint:** `https://3vyyso35ndaxoup63e5ro6jg2i0dzutl.lambda-url.us-east-2.on.aws/`, kept up through grading and then destroyed. At the rehearsal (2026-10-15 16:11:48Z), `GET /health` returned `status: ok` (DynamoDB ok, SSM ok) with `build_sha` `a5b9ec039e6e259ea13fde3fd320ca9bff3c0394`. The Step Functions watcher is on in this stack.
 
 The URL uses `AWS_IAM` auth. Graders receive an invoke-only access key for the IAM user `qmc-dev-grader` privately; it is never committed and will be deleted after grading.
 
@@ -255,7 +262,7 @@ The job holds no seed yet. The API retries in the background, and the job become
 - Up to 4 attempts at Qrypt, after waits of 2, 4, 6 and 6 s. `PENDING_BACKOFF_MS` is 2000,4000,8000, with the last value repeating, and each wait is capped so the attempt fits the API's 10 s timeout.
 - If our own 2 s limiter is busy (another submit or seeder holds the slot), the seeder waits for the slot plus 0–2 s of random jitter. That wait does not use up an attempt (MR !57).
 - The job gives up after 120 s. A GET after that fails a job whose retry was lost.
-- Known limit (contract change 008): a pending job whose retry was lost still counts toward the 10-job cap until a GET expires it, or until it drops out of the newest 50 jobs. Meanwhile new opt-in submits fail fast with the original error, so nothing is written for them.
+- A job whose retry was lost does not block new queued submits: once past its 120 s, the next `--queue` submit ends it as FAILED (`PENDING_EXPIRED`) and does not count it toward the 10-job cap (contract change 010, which removed 008's known limit).
 
 An invalid or expired token, a used-up quota (`QRYPT_FORBIDDEN`) or a missing secret still rejects at once and writes nothing. Replaying a pending job returns 409.
 
@@ -353,7 +360,7 @@ From WS4's `make bench` on the deployed stack (build `6dcb3c2`, 2026-10-13 13:20
 | Submit latency, warm (client round trip, n = 49) | p95 < 800 ms | p50 **251 ms**, p95 **301 ms** (Lambda `Duration` p50 105 ms, p95 151 ms) |
 | 1,000,000-path job wall clock, 5 runs (server-side `completed_at − created_at`) | < 60 s | **0.18–0.46 s** (client-observed ≤ 2.6 s) |
 | API cold start (natural, `Init Duration`) | reported separately | init p50 **375 ms**; a cold submit costs about 1.05 s on the server |
-| `terraform apply` from empty | < 10 min | **65 s** for 33 resources (`make drift-check`, 2026-10-13 15:33Z, [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)) |
+| `terraform apply` from empty | < 10 min | **110 s** for 37 resources, watcher and grader user on (fresh-clone rehearsal, 2026-10-15 16:09Z); 65 s for 33 resources in the earlier drift check (`make drift-check`, 2026-10-13 15:33Z, [docs/TEST_RESULTS.md](docs/TEST_RESULTS.md)) |
 
 ## Security
 
@@ -374,7 +381,7 @@ Details in [docs/SECURITY.md](docs/SECURITY.md).
 | Portfolio VaR | **Parked** (D45) | A VaR is a quantile, which does not add across shards. It needs a histogram fan-in, a Cholesky step without BLAS, and changes to every interface: ≈ 43 h, too much for the timebox |
 | Ephemeral per-branch environments | **Parked** (D46) | The account's SCP denies creating OIDC providers, so CI would need a long-lived admin-level key in a public repo; per-environment alarms and metrics would exceed the free tier's 10 |
 | CI deploys | **Out** (D21) | Same credential problem; every apply runs from `main` by the integrator (D33) |
-| Step Functions watcher | **Built, off by default** (`enable_step_functions = true` in your tfvars to try it; D21, contract change 007) | Polls each job every 10 s until it is terminal, so its execution history shows each job's outcome. In WS4's drill a COMPLETE job's execution SUCCEEDED (10 s) and a forced PARTIAL job's FAILED with `JobNotComplete` (20 s); it was switched off again afterwards. Free only up to about 570–1,000 jobs a month, ≈ $0.23–$0.48 a month at 100 jobs a day ([docs/COST.md](docs/COST.md)) |
+| Step Functions watcher | **Built, off by default; on in our deployed stack** (`enable_step_functions = true` in your tfvars; D21, contract change 007) | Polls each job every 10 s until it is terminal, so its execution history shows each job's outcome. In WS4's drill a COMPLETE job's execution SUCCEEDED (10 s) and a forced PARTIAL job's FAILED with `JobNotComplete` (20 s). At the rehearsal both executions (the job and its replay, named by job id) SUCCEEDED in 10.2 s. Free up to 4,000 state transitions a month (about 570–1,000 jobs; [docs/COST.md](docs/COST.md)) |
 | PENDING_ENTROPY (queue a submit when Qrypt is rate-limited) | **Built, opt-in per request** (D21, contract change 008) | Off unless a submit asks for it, so the default stays strict fail-closed (I1). At most 10 pending jobs, 4 attempts and 120 s. Drill: 10 of 10 queued jobs COMPLETE (see the API reference) |
 
 Other known limits:

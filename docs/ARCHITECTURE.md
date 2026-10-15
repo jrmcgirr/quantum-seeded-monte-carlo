@@ -1,6 +1,6 @@
 # Architecture
 
-> **Draft (QMC-150),** drawn from HANDOFF §8 before anything is deployed. QMC-152 checks it against `terraform state list` after G2: every resource in state must appear here.
+> Drawn from HANDOFF §8 (QMC-150), then reconciled with `terraform state list` from the fresh-clone rehearsal (QMC-152, 2026-10-15, `main` `a5b9ec0`): every one of the 37 managed resources appears below.
 
 All resources are in **us-east-2** and named `qmc-<env>` (`env` = `dev`), except the account-wide Budget `qmc-monthly`.
 
@@ -11,7 +11,7 @@ flowchart LR
     subgraph clients["Callers"]
         CLI["clients/qmc.py or curl (SigV4)"]
         GU["IAM user qmc-env-grader (inline invoke policy, D37)"]
-        CR["IAM role qmc-env-client"]
+        CR["IAM role + policy qmc-env-client"]
     end
 
     subgraph api["module api"]
@@ -20,7 +20,7 @@ flowchart LR
         APIR["IAM role + policy: api"]
         APIL["Log group /aws/lambda/qmc-env-api (14 d)"]
         EIC["Event-invoke config: 0 retries, max age 300 s (008)"]
-        SFN["Optional: Step Functions qmc-env-watcher + role (off by default, 007)"]
+        SFN["Optional: Step Functions qmc-env-watcher + role and policy (off by default, on in the deployed stack, 007)"]
     end
 
     subgraph ext["Outside Terraform"]
@@ -32,7 +32,7 @@ flowchart LR
         DDB[("DynamoDB qmc-env (provisioned 10/10, TTL)")]
         SQ["SQS qmc-env-shards (SSE-SQS)"]
         DLQ["SQS qmc-env-shards-dlq (SSE-SQS, 14 d)"]
-        QP["Queue policies: deny non-TLS"]
+        QP["Queue policies: deny non-TLS; redrive policy: 3 receives"]
     end
 
     subgraph workers["module workers"]
@@ -46,7 +46,7 @@ flowchart LR
     subgraph obs["module observability + budget"]
         ALM["CloudWatch alarms (7)"]
         DASH["CloudWatch dashboard qmc-env"]
-        SNS["SNS qmc-env-alerts"]
+        SNS["SNS qmc-env-alerts + topic policy"]
         SUB["Email subscription"]
         BUD["AWS Budget qmc-monthly ($1)"]
     end
@@ -82,9 +82,21 @@ flowchart LR
     style SFN stroke-dasharray: 5 5
 ```
 
-Dashed outline: the Step Functions watcher and its role exist only with `enable_step_functions = true` (contract change 007). WS4's drill switched it on (18:16Z): a COMPLETE job's execution SUCCEEDED and a PARTIAL job's FAILED with `JobNotComplete`. It was switched off again at 19:30Z, and `ListStateMachines` returns none (docs/TEST_RESULTS.md).
+Dashed outline: the Step Functions watcher and its role exist only with `enable_step_functions = true` (contract change 007). WS4's drill switched it on (2026-10-13 18:16Z): a COMPLETE job's execution SUCCEEDED and a PARTIAL job's FAILED with `JobNotComplete` (docs/TEST_RESULTS.md). It is **on in the final deployed stack**: at the rehearsal both executions, named by job id (`0aaa055f…` and its replay `9dbf6846…`), SUCCEEDED in 10.2 s (`ListExecutions`, 16:11:51–16:12:05Z).
 
-*TBD (QMC-152): reconcile with `terraform state list` (data sources, `aws_iam_policy_document`s, the redrive policy, the topic policy, the Function URL permission) and mark the dashboard as cut if QMC-118 is cut.*
+### Reconciled with `terraform state list`
+
+The rehearsal's state list has 52 entries: **37 managed resources**, matching "37 added" from the apply, and 15 data sources.
+
+| Module | Managed resources in state | In the diagram as |
+| --- | --- | --- |
+| `api` (13) | `aws_lambda_function.api`, `aws_lambda_function_url.api`, `aws_lambda_function_event_invoke_config.api`, `aws_cloudwatch_log_group.api`, `aws_iam_role.api` + `aws_iam_role_policy.api`, `aws_iam_role.client` + `aws_iam_role_policy.client`, `aws_iam_user.grader[0]` + `aws_iam_user_policy.grader[0]`, `aws_sfn_state_machine.watcher[0]`, `aws_iam_role.watcher[0]` + `aws_iam_role_policy.watcher[0]` | URL, APIF, EIC, APIL, APIR, CR, GU, SFN |
+| `data` (6) | `aws_dynamodb_table.main`, `aws_sqs_queue.shards`, `aws_sqs_queue.dlq`, `aws_sqs_queue_policy.shards`, `aws_sqs_queue_policy.dlq`, `aws_sqs_queue_redrive_policy.shards` | DDB, SQ, DLQ, QP |
+| `workers` (6) | `aws_lambda_function.worker`, `aws_lambda_event_source_mapping.shards`, `aws_lambda_runtime_management_config.worker`, `aws_cloudwatch_log_group.worker`, `aws_iam_role.worker` + `aws_iam_role_policy.worker` | WF, ESM, RMC, WL, WR |
+| `observability` (11) | `aws_cloudwatch_metric_alarm.this` × 7 (`api-errors`, `dlq-depth`, `jobs-partial`, `queue-age`, `seeding-failures`, `worker-errors`, `worker-throttles`), `aws_cloudwatch_dashboard.main`, `aws_sns_topic.alerts`, `aws_sns_topic_policy.alerts`, `aws_sns_topic_subscription.email` | ALM, DASH, SNS, SUB |
+| `budget[0]` (1) | `aws_budgets_budget.monthly` | BUD |
+
+The 15 data sources create nothing: `aws_caller_identity` (×2), `aws_region` (×2), and 11 `aws_iam_policy_document`s that render the role, user, queue and topic policies above (`api`, `assume`, `client_assume`, `invoke`, `watcher[0]`, `watcher_assume[0]`, `tls_only["shards"]`, `tls_only["dlq"]`, `alerts`, and the worker's `assume` and `worker`). There is no `aws_lambda_permission`: with `AWS_IAM` auth, the callers' identity policies grant `lambda:InvokeFunctionUrl`. The dashboard was built, not cut. Outside Terraform: the SSM parameter (created by CLI, I6) and the grader's access key (created by CLI, D44).
 
 ## Submit, including the fail-closed branch
 
@@ -155,7 +167,33 @@ Every transition is conditional on `status = PENDING_ENTROPY`, so the seeder and
 
 ## Shard processing and finalize
 
-*TBD (QMC-152): worker sequence: shard put (duplicate = continue), `ADD done_shards`, last shard aggregates and finalizes COMPLETE or PARTIAL; failure path to the DLQ.*
+```mermaid
+sequenceDiagram
+    autonumber
+    participant M as SQS shards
+    participant W as Worker Lambda
+    participant D as DynamoDB
+    participant L as DLQ
+    M->>W: one message (batch 1, ≤ 5 concurrent)
+    W->>W: decode, then simulate shard i from (master seed, i)
+    alt success
+        W->>D: shard put SHARD#i (conditional: first write wins)
+        Note over W,D: a duplicate delivery is refused here and continues
+        W->>D: ADD i to done_shards (conditional: the job exists)
+        opt every shard now done or failed
+            W->>D: query all shards, aggregate (fsum)
+            W->>D: COMPLETE, or PARTIAL with failed indexes and a partial result (conditional on status)
+        end
+    else failure (attempt < 3)
+        W->>M: visibility 5 s, report batch item failure
+    else failure on attempt 3
+        W->>D: ADD i to failed_shards (conditional: i not already done), then finalize as above
+        W->>M: report failure
+        M->>L: 4th receive moves it to the DLQ (depth alarm)
+    end
+```
+
+The worker never raises: it returns `batchItemFailures`, so only the failed message is retried. Each finalize write is conditional; if another worker finalized first, it re-decides once from the returned item and stops. A message that cannot be decoded has no job to mark and goes to the DLQ after 3 receives (HANDOFF §7.6).
 
 ## Replay
 
