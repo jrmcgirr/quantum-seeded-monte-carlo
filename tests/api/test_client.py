@@ -19,6 +19,25 @@ def test_url_resolution_prefers_flag_then_env(monkeypatch):
     assert qmc.resolve_url("https://x.lambda-url.eu-west-1.on.aws").endswith("on.aws")
 
 
+@pytest.mark.parametrize("terraform", ["", OSError("terraform: not found")])
+def test_no_deployed_stack_is_a_one_line_exit_2(monkeypatch, capsys, terraform):
+    import subprocess
+
+    def output(*a, **k):  # `terraform output -raw api_url` with no stack prints nothing
+        if isinstance(terraform, Exception):
+            raise terraform
+        return subprocess.CompletedProcess(a, 0, stdout=terraform)
+
+    monkeypatch.delenv("QMC_API_URL", raising=False)
+    monkeypatch.setattr(qmc.subprocess, "run", output)
+    with pytest.raises(SystemExit) as exit_:
+        qmc.main(["health"])
+    assert exit_.value.code == 2
+    assert capsys.readouterr().err == (
+        "no API URL: run make apply, or pass --url / set QMC_API_URL\n"
+    )
+
+
 def test_request_is_signed_and_never_raises_on_4xx(monkeypatch, aws_env):
     sent = {}
 
