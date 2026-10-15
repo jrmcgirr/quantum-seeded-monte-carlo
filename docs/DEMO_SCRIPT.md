@@ -21,7 +21,7 @@ Expected durations come from the G1–G3 drills (docs/TEST_RESULTS.md, docs/BENC
 | # | Segment | Command | Expect | Target on video |
 | --- | --- | --- | --- | --- |
 | 0 | Title: what it does | README top, architecture diagram | — | 0:15 |
-| 1 | `terraform apply` from empty, sped up | `make build && make apply` | About 65 s and 33 resources (drift check, 15:33Z). End on the outputs (`api_url`) | 0:40 |
+| 1 | `terraform apply` from empty, sped up | `make build && make apply` | About 110 s and 37 resources, with the watcher and grader user on (fresh-clone rehearsal, 2026-10-15). End on the outputs (`api_url`) | 0:40 |
 | 1b | SNS confirmation | Click "Confirm subscription" in the email | "Subscription confirmed!" | 0:10 |
 | 2 | A 1M-path job running to COMPLETE | `uv run python clients/qmc.py submit --S0 100 --K 100 --r 0.05 --sigma 0.2 --T 1 --paths 1000000 --shards 10`, then `… wait <job_id>` | 202 with `master_seed_hex`; COMPLETE in about 1–3 s from submit. `wait` may see COMPLETE on its first poll | 0:40 |
 | 3 | The Black-Scholes comparison | `uv run python clients/qmc.py get <job_id>` | `result.estimate`, `std_error`, `ci95`; `reference.black_scholes` 10.450583572185565, `z_score`, `within_3se: true`; `seed_provenance` (Qrypt, `raw_sha256`) | 0:35 |

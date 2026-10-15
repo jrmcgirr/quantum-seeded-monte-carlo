@@ -71,3 +71,23 @@
 - **Mistakes made and fixed:** !53 first said the PENDING_ENTROPY backoff was 2, 4, 8 s, read from the environment variable only; the code caps each wait to fit the 10 s timeout, so it is 2, 4, 6, 6 s. WS0 pointed it out; fixed in !53 before merge.
 - **Found for others:** HANDOFF still said "nothing is written" (I1), "no Step Functions" (I7, §10) and "No PENDING_ENTROPY queue" (D10) after 007/008, fixed by WS0 in 1.18; HANDOFF §5.3's 429 and `QRYPT_RATE_LIMITED` rows still describe pre-006 behaviour (reported to WS0).
 - **Human checked or changed:** WS0 reviewed and merged every MR. *Pending: the fresh-clone rehearsal with James, the Qrypt token's expiry date and the video.*
+
+## 2026-10-15, final day: rehearsal evidence into the docs (WS5)
+
+- **Tool and model:** Claude Code, Opus 5.5. Instructions from the WS0 session and James.
+- **Asked:** fold the fresh-clone rehearsal (QMC-157) into the docs; update the README and DECISIONS for contract change 010; record the watcher as on in the deployed stack; switch the demo's segment 5 to the saved alarm-email screenshot (James).
+- **Produced:**
+  - README: the rehearsal note, the guard-main line, the annotated output of job `0aaa055f…` and replay `9dbf6846…`, the endpoint and `build_sha`, the 010 text, and the watcher row.
+  - ARCHITECTURE: the reconciliation with `terraform state list` (37 managed resources and 15 data sources) and the worker/finalize sequence diagram.
+  - COST and DECISIONS: the watcher on in the deployed stack, and 010.
+  - DEMO_SCRIPT: segment 1 timings and segment 5.
+- **Checked:**
+  - Every figure quoted from WS0's rehearsal log.
+  - Both watcher executions, with a read-only `ListExecutions` (SUCCEEDED, 10.2 s each).
+  - The resource count (52 entries = 37 managed + 15 data).
+  - The worker diagram's conditions, against `qmc_core.ddb`.
+  - All five Mermaid diagrams render.
+- **Mistakes made and fixed:**
+  - The first draft of the worker diagram said `mark_done` was conditional on the status; it is conditional only on the job existing. Fixed before the push.
+  - A `;` in a Mermaid message broke the parse. Fixed before the push.
+- **Human checked or changed:** James chose the saved email screenshot for segment 5. *Pending: the video link.*
