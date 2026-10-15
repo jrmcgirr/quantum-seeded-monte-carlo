@@ -125,3 +125,10 @@
   - Env verified: the PENDING variables are set, and `SFN_ARN` is unset (watcher off). #53 and #54 closed.
   - G3 (`g3-proven` on main 2fbd97e): every WS1 predicted plan matched, including the watcher on (3 add / 3 change) and off.
 - **Human checks:** James approved the push and both MRs; WS0 merged, applied and ran the watcher drill with WS4.
+
+## 2026-10-15, WS1 Infrastructure (final submission: tfvars example)
+
+- **Tool and model:** Claude Code, Claude Opus 5.5.
+- **Asked (WS0):** `infra/terraform.tfvars.example` lacked two settings the README table documents.
+- **Produced:** commit 9b2003a on `ws1-infra` (from main 032df7d), which appends `# enable_step_functions = true` (contract change 007, off by default; free up to 4,000 transitions a month) and `# region = "us-east-2"` (the default; the SSM parameter must be in the same Region), commented out in the existing style. The example file isn't loaded by Terraform, so there is no plan change and no apply. `terraform fmt` refuses the `.example` extension; the new lines are comments only. WS0 opens the MR and merges at that SHA. This log entry is on a separate branch so that SHA stays unchanged.
+- **Human checks:** James approved the push; WS0 merges, then destroys and applies from empty.
