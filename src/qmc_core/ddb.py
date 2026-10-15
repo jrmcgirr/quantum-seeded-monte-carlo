@@ -449,7 +449,8 @@ def joblist_query(limit: int = 50) -> dict:
 
 
 def job_statuses(table_name: str, job_ids: Iterable[str]) -> dict:
-    """Service-resource ``batch_get_item`` for up to 100 ids, projection ``job_id, #s``."""
+    """Service-resource ``batch_get_item`` for up to 100 ids, projection ``job_id, #s,
+    pending_until`` (the last only on PENDING_ENTROPY jobs; contract change 010)."""
     ids = list(dict.fromkeys(job_ids))
     if len(ids) > 100:
         raise ValueError("BatchGetItem takes at most 100 keys")
@@ -457,8 +458,12 @@ def job_statuses(table_name: str, job_ids: Iterable[str]) -> dict:
         "RequestItems": {
             table_name: {
                 "Keys": [job_key(i) for i in ids],
-                "ProjectionExpression": "#id, #s",
-                "ExpressionAttributeNames": {"#id": "job_id", "#s": "status"},
+                "ProjectionExpression": "#id, #s, #pu",
+                "ExpressionAttributeNames": {
+                    "#id": "job_id",
+                    "#s": "status",
+                    "#pu": "pending_until",
+                },
             }
         }
     }

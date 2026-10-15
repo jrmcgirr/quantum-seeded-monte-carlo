@@ -168,7 +168,7 @@ def test_joblist_newest_first_and_statuses(ddb_table):
     )
     got = res["Responses"][ddb_table.name]
     assert sorted(g["job_id"] for g in got) == [f"{1:032x}", f"{2:032x}"]
-    assert all(set(g) == {"job_id", "status"} for g in got)
+    assert all(set(g) == {"job_id", "status"} for g in got)  # pending_until only when present
     with pytest.raises(ValueError):
         ddb.job_statuses("t", [f"{i:032x}" for i in range(101)])
 
@@ -418,6 +418,15 @@ def test_pending_fail(ddb_table):
     got = ddb_table.get_item(**ddb.job_get(JOB))["Item"]
     assert got["status"] == "FAILED" and got["fail_reason"].startswith("QRYPT_RATE_LIMITED")
     refused(lambda: ddb_table.update_item(**ddb.pending_to_queued(JOB, "ab" * 32, {}, NOW, 900)))
+
+
+def test_job_statuses_projects_pending_until(ddb_table):
+    """Contract change 010: the room count can see an abandoned PENDING job's expiry."""
+    ddb_table.put_item(**ddb.job_put(pending_item()))
+    got = boto3.resource("dynamodb", region_name="us-east-2").batch_get_item(
+        **ddb.job_statuses(ddb_table.name, [JOB])
+    )["Responses"][ddb_table.name]
+    assert got == [{"job_id": JOB, "status": "PENDING_ENTROPY", "pending_until": int(NOW) + 120}]
 
 
 def test_shard_put_billing_fields(ddb_table):
