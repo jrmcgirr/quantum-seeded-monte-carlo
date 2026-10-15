@@ -18,3 +18,10 @@ alert_email = "you@example.com"
 
 # Budgets are account-wide: only one environment per account should create one.
 # create_budget = false
+
+# Optional Step Functions watcher (contract change 007). Off by default: free only up to 4,000 state
+# transitions a month (about 700 jobs).
+# enable_step_functions = true
+
+# AWS Region (the default). The Qrypt token's SSM parameter must be in the same Region.
+# region = "us-east-2"
