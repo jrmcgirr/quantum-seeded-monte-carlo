@@ -46,10 +46,11 @@ def resolve_url(url: str | None = None) -> str:
                 text=True,
                 check=True,
             ).stdout.strip()
-        except (OSError, subprocess.CalledProcessError) as exc:
-            raise SystemExit(
-                f"No API URL: pass --url, set QMC_API_URL or run from a deployed checkout ({exc})"
-            ) from None
+        except (OSError, subprocess.CalledProcessError):
+            url = ""
+    if not url:  # also a checkout with no deployed stack: terraform output is empty
+        print("no API URL: run make apply, or pass --url / set QMC_API_URL", file=sys.stderr)
+        raise SystemExit(2)
     return url.rstrip("/")
 
 
