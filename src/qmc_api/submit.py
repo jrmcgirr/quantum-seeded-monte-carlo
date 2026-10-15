@@ -123,14 +123,22 @@ def _job_fields(job_id: str, spec: JobSpec) -> dict:
 
 
 def _pending_room(table) -> bool:
-    """Fewer than MAX_PENDING_ENTROPY jobs still PENDING_ENTROPY among the newest 50."""
+    """Fewer than MAX_PENDING_ENTROPY jobs still PENDING_ENTROPY among the newest 50. A PENDING
+    job past ``pending_until`` (its seeder event lost) is failed here, not counted (010)."""
     entries = table.query(**ddb.joblist_query(jobs.LIST_LIMIT))["Items"]
     ids = [e["job_id"] for e in entries if e["status_at_submit"] == pending.PENDING]
     if not ids:
         return True
     resp = aws.dynamodb().batch_get_item(**ddb.job_statuses(table.name, ids))
-    statuses = [i["status"] for i in resp["Responses"].get(table.name, [])]
-    return statuses.count(pending.PENDING) < aws.env_int("MAX_PENDING_ENTROPY")
+    now, live = time.time(), 0
+    for item in resp["Responses"].get(table.name, []):
+        if item["status"] != pending.PENDING:
+            continue
+        if now > int(item["pending_until"]):
+            pending.fail_pending(table, item["job_id"], "PENDING_EXPIRED")
+        else:
+            live += 1
+    return live < aws.env_int("MAX_PENDING_ENTROPY")
 
 
 def _queue_pending(table, job_id: str, spec: JobSpec, code: ErrorCode) -> tuple[int, dict]:

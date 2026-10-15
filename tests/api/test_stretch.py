@@ -137,6 +137,25 @@ def test_pending_cap_returns_the_original_error(api, invokes, monkeypatch):
     assert len(api.items("JOB#")) == 1 and len(invokes) == 1
 
 
+def test_expired_pending_jobs_free_the_cap_and_end_failed(api, invokes):
+    abandoned = [queue_one(api, invokes) for _ in range(10)]  # MAX_PENDING_ENTROPY 10
+    for job_id in abandoned:  # their seeder events were lost
+        expire_pending(api, job_id)
+    job_id = queue_one(api, invokes)
+    assert job_item(api, job_id)["status"] == "PENDING_ENTROPY"
+    for old in map(lambda j: job_item(api, j), abandoned):
+        assert (old["status"], old["fail_reason"]) == ("FAILED", "PENDING_EXPIRED")
+    queue_one(api, invokes)  # the FAILED ones no longer count, nor are failed again
+
+
+def test_live_pending_jobs_still_fill_the_cap(api, invokes):
+    for _ in range(10):
+        queue_one(api, invokes)
+    api.fake.failures = [UNAVAILABLE, UNAVAILABLE]
+    status, _, body = api.call("POST", "/jobs", QUEUE)
+    assert (status, body["error"]["code"]) == (503, UNAVAILABLE.name)
+
+
 def test_retryable_failures_back_off_then_fail_after_max_attempts(
     api, invokes, sleeps, seeder, capsys
 ):
